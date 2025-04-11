@@ -337,15 +337,37 @@ func (c *CPU) BIT() uint8 {
 }
 
 func (c *CPU) BRK() uint8 {
-	c.PC++
-	c.setFlag(I, true)
+	// Note: PC is already incremented once by Clock() to point after the $00 opcode.
+	// The 6502 pushes PC+2 relative to the opcode address.
+	// The extra PC++ here achieves that. If removed, PC+1 would be pushed.
+	c.PC++ // Make PC point to PC+2 relative to opcode fetch address
+
+	// Push PC onto stack (now PC+2)
 	c.push16(c.PC)
+
+	// Push status register onto stack
+	// Note: B flag is SET, U flag is SET in the pushed copy
 	c.setFlag(B, true)
-	c.push(uint8(c.P))
-	c.setFlag(B, false) // B flag only set in pushed copy
+	c.setFlag(U, true)
+	// --- Push P BEFORE setting I flag ---
+	originalP := c.P                 // Capture P before setting I
+	c.push(uint8(originalP | B | U)) // Push original flags + B + U
+	// Push P with B and U set
+	// c.push(uint8(c.P)) // Original incorrect line
+
+	// Set Interrupt Disable flag AFTER push
+	c.setFlag(I, true)
+
+	// Clear B flag in processor's actual register (it was only set for the push)
+	c.setFlag(B, false)
+
+	// Load interrupt vector ($FFFE/F)
 	lo := uint16(c.read(0xFFFE))
 	hi := uint16(c.read(0xFFFF))
 	c.PC = (hi << 8) | lo
+
+	// BRK takes 7 cycles total (base cycles handled by lookup table)
+	// This function returns *extra* cycles, which should be 0 here.
 	return 0
 }
 
@@ -884,28 +906,50 @@ func (c *CPU) Reset() {
 // InterruptRequest (remains the same)
 func (c *CPU) InterruptRequest() {
 	if !c.getFlag(I) {
+		// Push PC onto stack (current PC)
 		c.push16(c.PC)
+
+		// Push status register onto stack
+		// Note: B flag is CLEARed, U flag is set in the pushed copy
 		c.setFlag(B, false)
 		c.setFlag(U, true)
+		// --- Push P BEFORE setting I flag ---
 		c.push(uint8(c.P))
+
+		// Set Interrupt Disable flag AFTER push
 		c.setFlag(I, true)
+
+		// Read interrupt vector ($FFFE/F)
 		lo := uint16(c.read(0xFFFE))
 		hi := uint16(c.read(0xFFFF))
 		c.PC = (hi << 8) | lo
+
+		// Interrupts take time
 		c.cycles = 7
 	}
 }
 
 // NonMaskableInterrupt (remains the same)
 func (c *CPU) NonMaskableInterrupt() {
+	// Push PC onto stack (current PC)
 	c.push16(c.PC)
+
+	// Push status register onto stack
+	// Note: B flag is CLEARed, U flag is set in the pushed copy
 	c.setFlag(B, false)
 	c.setFlag(U, true)
+	// --- Push P BEFORE setting I flag ---
 	c.push(uint8(c.P))
+
+	// Set Interrupt Disable flag AFTER push
 	c.setFlag(I, true)
+
+	// Read NMI vector ($FFFA/B)
 	lo := uint16(c.read(0xFFFA))
 	hi := uint16(c.read(0xFFFB))
 	c.PC = (hi << 8) | lo
+
+	// NMIs take time
 	c.cycles = 8
 }
 
