@@ -775,6 +775,169 @@ func TestBranchInstructions(t *testing.T) {
 	}
 }
 
+// --- Jump and Subroutine Tests ---
+
+func TestJumpSubroutineInstructions(t *testing.T) {
+	const baseAddr = 0xC000 // Common starting point for PC
+
+	// --- JMP Absolute ---
+	t.Run("JMP Absolute", func(t *testing.T) {
+		cpu, bus := setupCPU()
+		targetAddr := uint16(0xABCD)
+		program := []uint8{
+			0x4C,                   // JMP Absolute opcode
+			uint8(targetAddr),      // Low byte of target address
+			uint8(targetAddr >> 8), // High byte of target address
+		}
+		bus.load(baseAddr, program)
+		cpu.PC = baseAddr
+		cpu.cycles = 0
+
+		runCycles(cpu, 3) // JMP Absolute takes 3 cycles
+
+		if cpu.PC != targetAddr {
+			t.Errorf("JMP Absolute failed: Expected PC=0x%04X, got PC=0x%04X", targetAddr, cpu.PC)
+		}
+	})
+
+	// --- JMP Indirect ---
+	t.Run("JMP Indirect", func(t *testing.T) {
+		cpu, bus := setupCPU()
+		indirectVectorAddr := uint16(0x1000)
+		targetAddr := uint16(0xEF90)
+
+		// Program: JMP ($1000)
+		program := []uint8{
+			0x6C,                           // JMP Indirect opcode
+			uint8(indirectVectorAddr),      // Low byte of indirect vector address
+			uint8(indirectVectorAddr >> 8), // High byte of indirect vector address
+		}
+		bus.load(baseAddr, program)
+
+		// Set up the indirect vector in memory
+		bus.Write(indirectVectorAddr, uint8(targetAddr))      // $1000 = $90 (Low byte)
+		bus.Write(indirectVectorAddr+1, uint8(targetAddr>>8)) // $1001 = $EF (High byte)
+
+		cpu.PC = baseAddr
+		cpu.cycles = 0
+
+		runCycles(cpu, 5) // JMP Indirect takes 5 cycles
+
+		if cpu.PC != targetAddr {
+			t.Errorf("JMP Indirect failed: Expected PC=0x%04X, got PC=0x%04X", targetAddr, cpu.PC)
+		}
+	})
+
+	// --- JMP Indirect Bug ---
+	t.Run("JMP Indirect Bug", func(t *testing.T) {
+		cpu, bus := setupCPU()
+		// Vector address where low byte is $FF -> $xxFF
+		indirectVectorAddr := uint16(0x10FF)
+		targetAddrLowByte := uint8(0x34)
+		targetAddrHighByte := uint8(0x12) // Expected target $1234
+
+		// Program: JMP ($10FF)
+		program := []uint8{
+			0x6C,                           // JMP Indirect opcode
+			uint8(indirectVectorAddr),      // Low byte ($FF)
+			uint8(indirectVectorAddr >> 8), // High byte ($10)
+		}
+		bus.load(baseAddr, program)
+
+		// Set up the indirect vector bytes demonstrating the bug
+		bus.Write(indirectVectorAddr, targetAddrLowByte) // $10FF = $34 (Correct low byte)
+		// The bug reads the high byte from $1000 instead of $1100
+		bus.Write(indirectVectorAddr&0xFF00, targetAddrHighByte) // $1000 = $12 (Incorrect high byte location)
+		bus.Write(indirectVectorAddr+1, 0xEE)                    // Write something different at the *correct* high byte loc ($1100) to ensure bug works
+
+		cpu.PC = baseAddr
+		cpu.cycles = 0
+
+		runCycles(cpu, 5) // JMP Indirect takes 5 cycles
+
+		expectedTargetAddr := uint16(targetAddrHighByte)<<8 | uint16(targetAddrLowByte) // $1234
+		if cpu.PC != expectedTargetAddr {
+			t.Errorf("JMP Indirect Bug failed: Expected PC=0x%04X, got PC=0x%04X", expectedTargetAddr, cpu.PC)
+		}
+	})
+
+	// --- JSR (Jump to Subroutine) ---
+	t.Run("JSR", func(t *testing.T) {
+		cpu, bus := setupCPU()
+		subroutineAddr := uint16(0xABCD)
+		initialSP := cpu.SP // SP is usually $FD after reset
+
+		// Program: JSR $ABCD at $C000
+		program := []uint8{
+			0x20,                       // JSR opcode
+			uint8(subroutineAddr),      // Low byte
+			uint8(subroutineAddr >> 8), // High byte
+		}
+		bus.load(baseAddr, program)
+		cpu.PC = baseAddr
+		cpu.cycles = 0
+
+		runCycles(cpu, 6) // JSR takes 6 cycles
+
+		// 1. Check PC jumped to subroutine
+		if cpu.PC != subroutineAddr {
+			t.Errorf("JSR failed: PC did not jump. Expected PC=0x%04X, got PC=0x%04X", subroutineAddr, cpu.PC)
+		}
+
+		// 2. Check SP decremented by 2
+		expectedSP := initialSP - 2
+		if cpu.SP != expectedSP {
+			t.Errorf("JSR failed: SP incorrect. Expected SP=0x%02X, got SP=0x%02X", expectedSP, cpu.SP)
+		}
+
+		// 3. Check stack content (Return address is PC of *last byte* of JSR instruction)
+		// JSR is 3 bytes: $C000 (opcode), $C001 (low), $C002 (high)
+		// Return address pushed is $C002
+		expectedReturnAddr := baseAddr + 2
+		pushedLow := bus.Read(stackBase + uint16(expectedSP+1))  // Lower address on stack = low byte
+		pushedHigh := bus.Read(stackBase + uint16(expectedSP+2)) // Higher address on stack = high byte
+
+		if pushedLow != uint8(expectedReturnAddr&0x00FF) {
+			t.Errorf("JSR failed: Stack low byte incorrect. Expected 0x%02X, got 0x%02X", uint8(expectedReturnAddr&0x00FF), pushedLow)
+		}
+		if pushedHigh != uint8(expectedReturnAddr>>8) {
+			t.Errorf("JSR failed: Stack high byte incorrect. Expected 0x%02X, got 0x%02X", uint8(expectedReturnAddr>>8), pushedHigh)
+		}
+	})
+
+	// --- RTS (Return from Subroutine) ---
+	t.Run("RTS", func(t *testing.T) {
+		cpu, bus := setupCPU()
+		returnAddrOnStack := uint16(0xC123)      // The address JSR would have pushed (PC of last byte of JSR)
+		expectedFinalPC := returnAddrOnStack + 1 // RTS increments after pulling
+		rtsInstructionAddr := uint16(0xD000)
+
+		// Manually set up stack as if JSR happened
+		initialSP := cpu.SP                                                    // Usually $FD
+		cpu.SP = initialSP - 2                                                 // Make space
+		bus.Write(stackBase+uint16(cpu.SP+2), uint8(returnAddrOnStack>>8))     // Push high byte ($C1)
+		bus.Write(stackBase+uint16(cpu.SP+1), uint8(returnAddrOnStack&0x00FF)) // Push low byte ($23)
+
+		// Program: Just RTS
+		program := []uint8{0x60} // RTS opcode
+		bus.load(rtsInstructionAddr, program)
+		cpu.PC = rtsInstructionAddr
+		cpu.cycles = 0
+
+		runCycles(cpu, 6) // RTS takes 6 cycles
+
+		// 1. Check PC is correct return address + 1
+		if cpu.PC != expectedFinalPC {
+			t.Errorf("RTS failed: PC incorrect. Expected PC=0x%04X, got PC=0x%04X", expectedFinalPC, cpu.PC)
+		}
+
+		// 2. Check SP incremented by 2 (back to original value)
+		if cpu.SP != initialSP {
+			t.Errorf("RTS failed: SP incorrect. Expected SP=0x%02X, got SP=0x%02X", initialSP, cpu.SP)
+		}
+	})
+}
+
 // --- Placeholder Tests for Complex Instructions ---
 // Add more tests here as you implement instructions like ADC, SBC, branches, shifts etc.
 
@@ -809,13 +972,6 @@ func TestComparePlaceholders(t *testing.T) {
 	// TODO: Write tests for CMP (A=M, A<M, A>M -> Flags C/Z/N)
 	// TODO: Write tests for CPX (X=M, X<M, X>M -> Flags C/Z/N)
 	// TODO: Write tests for CPY (Y=M, Y<M, Y>M -> Flags C/Z/N)
-}
-
-func TestJumpSubroutinePlaceholders(t *testing.T) {
-	t.Skip("Skipping jump/subroutine tests - Implement instructions first.")
-	// TODO: Write tests for JMP (ABS/IND, including indirect bug)
-	// TODO: Write tests for JSR (check PC, SP, stack content)
-	// TODO: Write tests for RTS (check PC, SP)
 }
 
 func TestInterruptPlaceholders(t *testing.T) {
