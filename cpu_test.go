@@ -574,8 +574,210 @@ func TestNopInstructions(t *testing.T) {
 			expectedCycles:      2,
 		},
 
-		// --- TODO: Unofficial NOPs (Examples from lookup table) ---
-		// TODO: 0x04, 0x44, 0x64, 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4
+		// --- Unofficial NOPs (implied mode) ---
+		{
+			name:                "Unofficial *NOP 1A IMP",
+			opcode:              0x1A,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP 3A IMP",
+			opcode:              0x3A,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP 5A IMP",
+			opcode:              0x5A,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP 7A IMP",
+			opcode:              0x7A,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP DA IMP",
+			opcode:              0xDA,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP FA IMP",
+			opcode:              0xFA,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+
+		// --- Illegal NOPs (Immediate mode) ---
+		{
+			name:                "Unofficial *NOP 80 IMM",
+			opcode:              0x80,
+			operand1:            0x00,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP 82 IMM",
+			opcode:              0x82,
+			operand1:            0x00,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP 89 IMM",
+			opcode:              0x89,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP C2 IMM",
+			opcode:              0xC2,
+			operand1:            0x00,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      2,
+		},
+		{
+			name:                "Unofficial *NOP E2 IMM",
+			opcode:              0xE2,
+			operand1:            0x00,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      2,
+		},
+
+		// --- Illegal NOPs (Zero page mode) ---
+		{
+			name:                "Unofficial *NOP 04 ZP0",
+			opcode:              0x04,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      3,
+		},
+		{
+			name:                "Unofficial *NOP 44 ZP0",
+			opcode:              0x44,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      3,
+		},
+		{
+			name:                "Unofficial *NOP 64 ZP0",
+			opcode:              0x64,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 2,
+			expectedCycles:      3,
+		},
+
+		// -- Illegal NOPs (Zero page X mode) ---
+		{
+			name:                "Unofficial *NOP 14 ZPX",
+			opcode:              0x14,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 34 ZPX",
+			opcode:              0x34,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 54 ZPX",
+			opcode:              0x54,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 74 ZPX",
+			opcode:              0x74,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP D4 ZPX",
+			opcode:              0xD4,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP F4 ZPX",
+			opcode:              0xF4,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 2,
+			expectedCycles:      4,
+		},
+
+		// -- Illegal NOPs (Absolute mode) ---
+		{
+			name:                "Unofficial *NOP 0C ABS",
+			opcode:              0x0C,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+
+		// -- Illegal NOPs (Absolute X mode) ---
+		{
+			name:                "Unofficial *NOP 1C ABX",
+			opcode:              0x1C,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 3C ABX",
+			opcode:              0x3C,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 5C ABX",
+			opcode:              0x5C,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP 7C ABX",
+			opcode:              0x7C,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP DC ABX",
+			opcode:              0xDC,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
+		{
+			name:                "Unofficial *NOP FC ABX",
+			opcode:              0xFC,
+			setup:               func(cpu *CPU) { cpu.X = 0x10 }, // Set X to a non-zero value
+			expectedPCIncrement: 3,
+			expectedCycles:      4,
+		},
 	}
 
 	for _, tt := range tests {
