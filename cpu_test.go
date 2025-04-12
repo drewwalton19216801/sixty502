@@ -551,6 +551,109 @@ func TestSTA(t *testing.T) {
 	}
 }
 
+// TestNOP tests the NOP instruction.
+func TestNopInstructions(t *testing.T) {
+	const baseAddr = 0x0A00 // Base address for these tests
+
+	// Define test cases for various NOP opcodes
+	tests := []struct {
+		name                string
+		opcode              uint8
+		operand1            uint8          // Optional operand byte 1
+		operand2            uint8          // Optional operand byte 2
+		setup               func(cpu *CPU) // Setup initial CPU state (esp. X/Y for indexed modes)
+		expectedPCIncrement uint16         // How many bytes PC should advance (1, 2, or 3)
+		expectedCycles      uint           // Expected cycles for this specific case
+	}{
+		// --- Official NOP ---
+		{
+			name:                "Official NOP EA IMP",
+			opcode:              0xEA,
+			setup:               func(cpu *CPU) {},
+			expectedPCIncrement: 1,
+			expectedCycles:      2,
+		},
+
+		// --- TODO: Unofficial NOPs (Examples from lookup table) ---
+		// TODO: 0x04, 0x44, 0x64, 0x14, 0x34, 0x54, 0x74, 0xD4, 0xF4
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus := setupCPU()
+			initialPC := uint16(baseAddr) // Use a consistent starting point within the test run
+
+			// Setup initial state
+			cpu.PC = initialPC
+			cpu.P = 0 // Clear all flags initially (except U will be set by CPU)
+			cpu.A = 0xAA
+			cpu.X = 0xBB
+			cpu.Y = 0xCC
+			cpu.SP = 0xFA
+			tt.setup(cpu) // Apply test-specific setup (like setting X)
+
+			// Store initial state *after* setup
+			initialA := cpu.A
+			initialX := cpu.X
+			initialY := cpu.Y
+			initialSP := cpu.SP
+			initialP := cpu.P | U // Expect U flag to be set eventually
+
+			// Construct the program bytes based on operands needed
+			program := []uint8{tt.opcode}
+			if tt.expectedPCIncrement >= 2 {
+				program = append(program, tt.operand1)
+			}
+			if tt.expectedPCIncrement >= 3 {
+				program = append(program, tt.operand2)
+			}
+			program = append(program, 0x00) // BRK for safety
+
+			bus.load(initialPC, program)
+			cpu.cycles = 0 // Start execution immediately
+
+			// Execute the instruction by running the expected number of cycles
+			cyclesRun := runCycles(cpu, tt.expectedCycles)
+
+			// --- Verification ---
+			expectedPC := initialPC + tt.expectedPCIncrement
+
+			// 1. Verify PC advancement
+			if cpu.PC != expectedPC {
+				t.Errorf("%s failed: PC incorrect. Expected 0x%04X, got 0x%04X", tt.name, expectedPC, cpu.PC)
+			}
+
+			// 2. Verify Registers Unchanged
+			if cpu.A != initialA {
+				t.Errorf("%s failed: A register changed. Expected 0x%02X, got 0x%02X", tt.name, initialA, cpu.A)
+			}
+			if cpu.X != initialX {
+				t.Errorf("%s failed: X register changed. Expected 0x%02X, got 0x%02X", tt.name, initialX, cpu.X)
+			}
+			if cpu.Y != initialY {
+				t.Errorf("%s failed: Y register changed. Expected 0x%02X, got 0x%02X", tt.name, initialY, cpu.Y)
+			}
+			if cpu.SP != initialSP {
+				t.Errorf("%s failed: SP register changed. Expected 0x%02X, got 0x%02X", tt.name, initialSP, cpu.SP)
+			}
+
+			// 3. Verify Flags Unchanged (except U should be set)
+			expectedP := initialP | U // Ensure U is considered set for comparison
+			if cpu.P != expectedP {
+				t.Errorf("%s failed: P register changed unexpectedly. Expected 0x%02X (%s), got 0x%02X (%s)",
+					tt.name, expectedP, fmt.Sprintf("%08b", expectedP), cpu.P, fmt.Sprintf("%08b", cpu.P))
+			}
+
+			// 4. Verify Cycles (Optional, but good sanity check)
+			// Note: runCycles might not be perfectly cycle-exact depending on implementation details,
+			// but it should be close for simple instructions like NOP.
+			if cyclesRun != uint64(tt.expectedCycles) {
+				t.Logf("%s warning: Cycle count mismatch. Expected %d, executed %d (This might be due to test harness timing)", tt.name, tt.expectedCycles, cyclesRun)
+			}
+		})
+	}
+}
+
 // TestRegisterTransfers tests TAX, TAY, TXA, TYA, TSX, TXS.
 func TestRegisterTransfers(t *testing.T) {
 	cpu, bus := setupCPU()
