@@ -551,6 +551,112 @@ func TestSTA(t *testing.T) {
 	}
 }
 
+// TestSTX tests the STX instruction.
+func TestSTX(t *testing.T) {
+	cpu, bus := setupCPU()
+	startAddr := uint16(0x0300)
+	valueToStore := uint8(0xDA)
+
+	tests := []struct {
+		name    string
+		program []uint8
+		addr    uint16 // Address where value should be stored
+		setup   func() // Optional setup before running
+	}{
+		{
+			"ZeroPage",
+			[]uint8{0x86, 0x40, 0x00}, // STX $40, BRK
+			0x0040, nil,
+		},
+		{
+			"ZeroPage,Y",
+			[]uint8{0x96, 0x40, 0x00}, // STX $40,Y, BRK
+			0x0045, func() { cpu.Y = 0x05 },
+		},
+		{
+			"Absolute",
+			[]uint8{0x8E, 0x34, 0x12, 0x00}, // STX $1234, BRK
+			0x1234, nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus = setupCPU() // Fresh instances
+			cpu.X = valueToStore  // Set X register value
+
+			if tt.setup != nil {
+				tt.setup()
+			}
+
+			bus.load(startAddr, tt.program)
+			cpu.PC = startAddr
+			cpu.cycles = 0
+
+			runUntilBrk(cpu, bus, 20)
+
+			storedValue := bus.Read(tt.addr)
+			if storedValue != valueToStore {
+				t.Errorf("STX %s failed: Expected 0x%02X at 0x%04X, got 0x%02X",
+					tt.name, valueToStore, tt.addr, storedValue)
+			}
+		})
+	}
+}
+
+// TestSTY tests the STY instruction.
+func TestSTY(t *testing.T) {
+	cpu, bus := setupCPU()
+	startAddr := uint16(0x0300)
+	valueToStore := uint8(0xDA)
+
+	tests := []struct {
+		name    string
+		program []uint8
+		addr    uint16 // Address where value should be stored
+		setup   func() // Optional setup before running
+	}{
+		{
+			"ZeroPage",
+			[]uint8{0x84, 0x40, 0x00}, // STY $40, BRK
+			0x0040, nil,
+		},
+		{
+			"ZeroPage,X",
+			[]uint8{0x94, 0x40, 0x00}, // STY $40,X, BRK
+			0x0045, func() { cpu.X = 0x05 },
+		},
+		{
+			"Absolute",
+			[]uint8{0x8C, 0x34, 0x12, 0x00}, // STY $1234, BRK
+			0x1234, nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus = setupCPU() // Fresh instances
+			cpu.Y = valueToStore  // Set Y register value
+
+			if tt.setup != nil {
+				tt.setup()
+			}
+
+			bus.load(startAddr, tt.program)
+			cpu.PC = startAddr
+			cpu.cycles = 0
+
+			runUntilBrk(cpu, bus, 20)
+
+			storedValue := bus.Read(tt.addr)
+			if storedValue != valueToStore {
+				t.Errorf("STY %s failed: Expected 0x%02X at 0x%04X, got 0x%02X",
+					tt.name, valueToStore, tt.addr, storedValue)
+			}
+		})
+	}
+}
+
 // TestNOP tests the NOP instruction.
 func TestNopInstructions(t *testing.T) {
 	const baseAddr = 0x0A00 // Base address for these tests
@@ -2301,6 +2407,180 @@ func TestIncrementDecrement(t *testing.T) {
 	}
 }
 
+// --- Compare Instruction Tests ---
+func TestCompareInstructions(t *testing.T) {
+	const baseAddr = 0x0B00 // New base address
+
+	// Get function pointers for comparison once
+	immPtr := getFuncPtr((*CPU).IMM)
+	zp0Ptr := getFuncPtr((*CPU).ZP0)
+	zpxPtr := getFuncPtr((*CPU).ZPX)
+	absPtr := getFuncPtr((*CPU).ABS)
+	abxPtr := getFuncPtr((*CPU).ABX)
+	abyPtr := getFuncPtr((*CPU).ABY)
+	izxPtr := getFuncPtr((*CPU).IZX)
+	izyPtr := getFuncPtr((*CPU).IZY)
+
+	type CompareTest struct {
+		name             string
+		instrName        string // "CMP", "CPX", "CPY"
+		register         byte   // 'A', 'X', or 'Y'
+		addrModePtr      uintptr
+		opcode           uint8
+		initialRegValue  uint8
+		operandValue     uint8    // Immediate or value in memory
+		memAddr          uint16   // Address for memory modes
+		setupXY          [2]uint8 // X, Y values for setup
+		expectedCarry    bool     // C = 1 if Reg >= Mem
+		expectedZero     bool     // Z = 1 if Reg == Mem
+		expectedNegative bool     // N = 1 if (Reg - Mem) & 0x80
+		cycles           uint
+	}
+
+	tests := []CompareTest{
+		// --- CMP (Compare Accumulator) ---
+		{instrName: "CMP", register: 'A', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x55, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "Immediate Greater", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x60, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},   // 60-55=0B
+		{instrName: "CMP", register: 'A', name: "Immediate Less", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x40, operandValue: 0x55, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},      // 40-55=EB
+		{instrName: "CMP", register: 'A', name: "Immediate NegResult", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x00, operandValue: 0x01, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true}, // 00-01=FF
+		{instrName: "CMP", register: 'A', name: "Immediate SameNeg", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x80, operandValue: 0x80, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "ZeroPage Greater", addrModePtr: zp0Ptr, opcode: 0xC5, initialRegValue: 0xAA, operandValue: 0x55, memAddr: 0x40, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false},                            // AA-55=55
+		{instrName: "CMP", register: 'A', name: "ZeroPage,X Less", addrModePtr: zpxPtr, opcode: 0xD5, initialRegValue: 0x10, operandValue: 0x20, memAddr: 0x50, setupXY: [2]uint8{0x05, 0}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true}, // Addr=55, 10-20=F0
+		{instrName: "CMP", register: 'A', name: "Absolute Equal", addrModePtr: absPtr, opcode: 0xCD, initialRegValue: 0xBE, operandValue: 0xBE, memAddr: 0xABCD, cycles: 4, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "Absolute,X Greater", addrModePtr: abxPtr, opcode: 0xDD, initialRegValue: 0xFF, operandValue: 0x01, memAddr: 0x1000, setupXY: [2]uint8{0x10, 0}, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // Addr=1010, FF-01=FE (N=1) Base cycles, no page cross
+		{instrName: "CMP", register: 'A', name: "Absolute,Y Less", addrModePtr: abyPtr, opcode: 0xD9, initialRegValue: 0x7F, operandValue: 0x80, memAddr: 0x2000, setupXY: [2]uint8{0, 0x20}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true},   // Addr=2020, 7F-80=FF (N=1) Base cycles, no page cross
+		{instrName: "CMP", register: 'A', name: "Indirect,X Equal", addrModePtr: izxPtr, opcode: 0xC1, initialRegValue: 0x42, operandValue: 0x42, memAddr: 0x60, setupXY: [2]uint8{0x03, 0}, cycles: 6, expectedCarry: true, expectedZero: true, expectedNegative: false},     // ZP Base=60, X=3 -> Addr=63
+		{instrName: "CMP", register: 'A', name: "Indirect,Y Greater", addrModePtr: izyPtr, opcode: 0xD1, initialRegValue: 0x90, operandValue: 0x80, memAddr: 0x70, setupXY: [2]uint8{0, 0x0A}, cycles: 5, expectedCarry: true, expectedZero: false, expectedNegative: false},  // ZP Base=70 -> points somewhere, +Y=A -> 90-80=10 (N=0) Base cycles, no page cross
+
+		// --- CPX (Compare X Register) ---
+		{instrName: "CPX", register: 'X', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xE0, initialRegValue: 0x33, operandValue: 0x33, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CPX", register: 'X', name: "Immediate Less", addrModePtr: immPtr, opcode: 0xE0, initialRegValue: 0x80, operandValue: 0x81, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},                  // 80-81=FF
+		{instrName: "CPX", register: 'X', name: "ZeroPage Greater", addrModePtr: zp0Ptr, opcode: 0xE4, initialRegValue: 0x01, operandValue: 0x00, memAddr: 0x41, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false}, // 01-00=01
+		{instrName: "CPX", register: 'X', name: "Absolute Less", addrModePtr: absPtr, opcode: 0xEC, initialRegValue: 0x00, operandValue: 0xFF, memAddr: 0xBEEF, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: false}, // 00-FF=01
+
+		// --- CPY (Compare Y Register) ---
+		{instrName: "CPY", register: 'Y', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xC0, initialRegValue: 0xCC, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CPY", register: 'Y', name: "Immediate Greater", addrModePtr: immPtr, opcode: 0xC0, initialRegValue: 0xDD, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},                    // DD-CC=11
+		{instrName: "CPY", register: 'Y', name: "ZeroPage Less", addrModePtr: zp0Ptr, opcode: 0xC4, initialRegValue: 0x10, operandValue: 0xF0, memAddr: 0x42, cycles: 3, expectedCarry: false, expectedZero: false, expectedNegative: false},        // 10-F0 = 20
+		{instrName: "CPY", register: 'Y', name: "Absolute Greater Neg", addrModePtr: absPtr, opcode: 0xCC, initialRegValue: 0x80, operandValue: 0x00, memAddr: 0xCAFE, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // 80-00=80
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s %s", tt.instrName, tt.name), func(t *testing.T) {
+			cpu, bus := setupCPU()
+
+			// --- Setup ---
+			cpu.P = U // Reset flags, keep U
+			cpu.X = tt.setupXY[0]
+			cpu.Y = tt.setupXY[1]
+
+			var initialRegValue uint8
+			switch tt.register {
+			case 'A':
+				cpu.A = tt.initialRegValue
+				initialRegValue = cpu.A
+			case 'X':
+				cpu.X = tt.initialRegValue
+				initialRegValue = cpu.X
+			case 'Y':
+				cpu.Y = tt.initialRegValue
+				initialRegValue = cpu.Y
+			default:
+				t.Fatalf("%s %s: Invalid register '%c' specified in test", tt.instrName, tt.name, tt.register)
+			}
+
+			var program []uint8
+			var effectiveAddr uint16 // For memory verification if needed, not directly used by compare
+
+			// Construct program and setup memory based on addressing mode
+			addrArgLow := uint8(tt.memAddr & 0x00FF)
+			addrArgHigh := uint8(tt.memAddr >> 8)
+
+			switch tt.addrModePtr {
+			case immPtr:
+				program = []uint8{tt.opcode, tt.operandValue, 0x00}
+			case zp0Ptr:
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				effectiveAddr = uint16(addrArgLow)
+				bus.Write(effectiveAddr, tt.operandValue)
+			case zpxPtr: // Only CMP uses this for compare
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
+				bus.Write(effectiveAddr, tt.operandValue)
+			case absPtr:
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				effectiveAddr = tt.memAddr
+				bus.Write(effectiveAddr, tt.operandValue)
+			case abxPtr: // Only CMP uses this for compare
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				effectiveAddr = tt.memAddr + uint16(cpu.X)
+				bus.Write(effectiveAddr, tt.operandValue)
+			case abyPtr: // Only CMP uses this for compare
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				effectiveAddr = tt.memAddr + uint16(cpu.Y)
+				bus.Write(effectiveAddr, tt.operandValue)
+			case izxPtr: // Only CMP uses this for compare
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				zpLookupAddr := (uint16(addrArgLow) + uint16(cpu.X)) & 0xFF
+				targetAddr := uint16(0xBEEF) // Dummy target address
+				bus.Write(zpLookupAddr, uint8(targetAddr&0xFF))
+				bus.Write((zpLookupAddr+1)&0xFF, uint8(targetAddr>>8))
+				bus.Write(targetAddr, tt.operandValue)
+			case izyPtr: // Only CMP uses this for compare
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				baseAddrLow := uint16(addrArgLow)
+				baseTarget := uint16(0xC000) // Dummy base address
+				bus.Write(baseAddrLow, uint8(baseTarget&0xFF))
+				bus.Write((baseAddrLow+1)&0xFF, uint8(baseTarget>>8))
+				effectiveAddr = baseTarget + uint16(cpu.Y)
+				bus.Write(effectiveAddr, tt.operandValue)
+			default:
+				t.Fatalf("%s %s: Unhandled addressing mode pointer in test setup: %v", tt.instrName, tt.name, tt.addrModePtr)
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.cycles = 0
+
+			// --- Execution ---
+			// Add +1 cycle for indexed modes if page boundary is crossed
+			// Note: Our runCycles doesn't automatically handle this extra cycle based on condition yet.
+			// For now, we use the base cycles. If precise cycle testing needed, adjust expected cycles or runCycles.
+			runCycles(cpu, tt.cycles)
+
+			// --- Verification ---
+			var finalRegValue uint8
+			switch tt.register {
+			case 'A':
+				finalRegValue = cpu.A
+			case 'X':
+				finalRegValue = cpu.X
+			case 'Y':
+				finalRegValue = cpu.Y
+			}
+
+			// 1. Verify Register Unchanged
+			if finalRegValue != initialRegValue {
+				t.Errorf("%s %s failed: Register %c changed. Expected 0x%02X, got 0x%02X", tt.instrName, tt.name, tt.register, initialRegValue, finalRegValue)
+			}
+
+			// 2. Verify Flags
+			if cpu.getFlag(C) != tt.expectedCarry {
+				t.Errorf("%s %s failed: Expected C=%v, got C=%v (P=%02X)", tt.instrName, tt.name, tt.expectedCarry, cpu.getFlag(C), cpu.P)
+			}
+			if cpu.getFlag(Z) != tt.expectedZero {
+				t.Errorf("%s %s failed: Expected Z=%v, got Z=%v (P=%02X)", tt.instrName, tt.name, tt.expectedZero, cpu.getFlag(Z), cpu.P)
+			}
+			if cpu.getFlag(N) != tt.expectedNegative {
+				t.Errorf("%s %s failed: Expected N=%v, got N=%v (P=%02X)", tt.instrName, tt.name, tt.expectedNegative, cpu.getFlag(N), cpu.P)
+			}
+			if !cpu.getFlag(U) {
+				t.Errorf("%s %s failed: U flag became unset (P=0x%02X)", tt.instrName, tt.name, cpu.P)
+			}
+		})
+	}
+}
+
 // --- Placeholder Tests for Complex Instructions ---
 // Add more tests here as you implement instructions like ADC, SBC, branches, shifts etc.
 
@@ -2308,13 +2588,6 @@ func TestArithmeticPlaceholders(t *testing.T) {
 	t.Skip("Skipping arithmetic tests (ADC/SBC) - Implement instructions first.")
 	// TODO: Write tests for ADC (various modes, flags C/V/Z/N, decimal mode?)
 	// TODO: Write tests for SBC (various modes, flags C/V/Z/N, decimal mode?)
-}
-
-func TestComparePlaceholders(t *testing.T) {
-	t.Skip("Skipping compare tests (CMP/CPX/CPY) - Implement instructions first.")
-	// TODO: Write tests for CMP (A=M, A<M, A>M -> Flags C/Z/N)
-	// TODO: Write tests for CPX (X=M, X<M, X>M -> Flags C/Z/N)
-	// TODO: Write tests for CPY (Y=M, Y<M, Y>M -> Flags C/Z/N)
 }
 
 func TestIllegalOpcode(t *testing.T) {
