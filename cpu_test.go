@@ -2,6 +2,7 @@ package cpu6502
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -101,18 +102,84 @@ func runUntilBrk(cpu *CPU, bus *MockBus, maxCycles uint64) uint64 {
 	return cpu.totalCycles - initialCycles
 }
 
+// Helper to format flags for error messages
+func flagsToString(p Flags) string {
+	return formatFlags(p) // Use the helper from cpu.go
+}
+
+// Helper to compare expected vs actual flags and build error messages
+func checkFlags(t *testing.T, testName string, cpu *CPU, expectedP Flags) {
+	t.Helper()
+	// Check individual flags for more specific error messages
+	expectedC := (expectedP & C) != 0
+	expectedZ := (expectedP & Z) != 0
+	expectedI := (expectedP & I) != 0
+	expectedD := (expectedP & D) != 0
+	// B is often compared based on context (stack push vs register)
+	// expectedB := (expectedP & B) != 0
+	expectedV := (expectedP & V) != 0
+	expectedN := (expectedP & N) != 0
+	expectedU := true // U is always expected to be 1
+
+	actualP := cpu.P
+	actualC := cpu.getFlag(C)
+	actualZ := cpu.getFlag(Z)
+	actualI := cpu.getFlag(I)
+	actualD := cpu.getFlag(D)
+	// actualB := cpu.getFlag(B)
+	actualV := cpu.getFlag(V)
+	actualN := cpu.getFlag(N)
+	actualU := cpu.getFlag(U)
+
+	var errors []string
+	if actualC != expectedC {
+		errors = append(errors, fmt.Sprintf("C (Exp:%v Got:%v)", expectedC, actualC))
+	}
+	if actualZ != expectedZ {
+		errors = append(errors, fmt.Sprintf("Z (Exp:%v Got:%v)", expectedZ, actualZ))
+	}
+	if actualI != expectedI {
+		errors = append(errors, fmt.Sprintf("I (Exp:%v Got:%v)", expectedI, actualI))
+	}
+	if actualD != expectedD {
+		errors = append(errors, fmt.Sprintf("D (Exp:%v Got:%v)", expectedD, actualD))
+	}
+	// if actualB != expectedB { errors = append(errors, fmt.Sprintf("B (Exp:%v Got:%v)", expectedB, actualB)) } // Usually not checked directly on P
+	if actualV != expectedV {
+		errors = append(errors, fmt.Sprintf("V (Exp:%v Got:%v)", expectedV, actualV))
+	}
+	if actualN != expectedN {
+		errors = append(errors, fmt.Sprintf("N (Exp:%v Got:%v)", expectedN, actualN))
+	}
+	if !actualU {
+		errors = append(errors, fmt.Sprintf("U (Exp:true Got:%v)", actualU))
+	} // U should always be true
+
+	if len(errors) > 0 {
+		t.Errorf("%s Flags mismatch: Expected P=0x%02X [%s], Got P=0x%02X [%s]. Differences: %s",
+			testName, expectedP, flagsToString(expectedP|U), actualP, flagsToString(actualP), strings.Join(errors, ", "))
+	} else if !expectedU && actualU {
+		// This case should ideally not happen, but flags U if it does.
+		t.Logf("%s Info: U flag unexpectedly set, but otherwise flags match. Expected P=0x%02X [%s], Got P=0x%02X [%s].",
+			testName, expectedP, flagsToString(expectedP), actualP, flagsToString(actualP))
+	} else if expectedU && !actualU {
+		// This is already caught by the main check above, but explicit check is fine.
+		// t.Errorf("%s Failed: U flag became unset. Got P=0x%02X [%s]", testName, actualP, flagsToString(actualP))
+	}
+}
+
 // --- Test Cases ---
 
 // TestReset verifies the CPU state after a Reset().
 func TestReset(t *testing.T) {
-	cpu, bus := setupCPU()
+	cpu, bus := setupCPU() // setupCPU now calls Reset internally
 
-	// Set up reset vector
+	// Set up a *different* reset vector to ensure Reset() reads it
 	resetAddr := uint16(0x8000)
 	bus.Write(0xFFFC, uint8(resetAddr&0x00FF)) // Low byte
 	bus.Write(0xFFFD, uint8(resetAddr>>8))     // High byte
 
-	cpu.Reset()
+	cpu.Reset() // Call Reset again to use the new vector
 
 	if cpu.PC != resetAddr {
 		t.Errorf("Reset() failed: Expected PC=0x%04X, got 0x%04X", resetAddr, cpu.PC)
@@ -129,71 +196,67 @@ func TestReset(t *testing.T) {
 	if cpu.SP != 0xFD {
 		t.Errorf("Reset() failed: Expected SP=0xFD, got 0x%02X", cpu.SP)
 	}
-	// Expect I and U flags to be set, others clear
+	// Expect U and I flags to be set, others clear
 	expectedFlags := U | I
-	// Clear B flag just in case it was somehow set before reset (shouldn't happen)
-	// This is slightly inaccurate, Reset doesn't explicitly clear B, it just sets P to U|I
-	// But we check against the expected U|I state.
-	if cpu.P != expectedFlags {
-		t.Errorf("Reset() failed: Expected P=0x%02X (%s), got 0x%02X (%s)",
-			expectedFlags, fmt.Sprintf("%08b", expectedFlags), cpu.P, fmt.Sprintf("%08b", cpu.P))
-	}
-	// Reset should take cycles (nominally 8, can vary slightly by model/source)
-	if cpu.cycles < 7 || cpu.cycles > 8 {
-		t.Errorf("Reset() failed: Expected cycles remaining ~8, got %d", cpu.cycles)
+	checkFlags(t, "TestReset", cpu, expectedFlags)
+
+	// Reset should take cycles (nominally 8)
+	if cpu.cycles != 8 {
+		t.Errorf("Reset() failed: Expected cycles remaining 8, got %d", cpu.cycles)
 	}
 }
 
 // TestFlagsInstruction verifies instructions that directly set/clear flags.
 func TestFlagsInstructions(t *testing.T) {
-	cpu, bus := setupCPU()
-
 	tests := []struct {
-		name     string
-		program  []uint8
-		flag     Flags
-		expected bool
+		name           string
+		program        []uint8
+		flag           Flags
+		initialP       Flags // Flags to set *before* running
+		expectedP      Flags // Expected flags *after* running
+		expectedCycles uint
 	}{
-		{"CLC", []uint8{0x18, 0x00}, C, false}, // CLC, BRK
-		{"SEC", []uint8{0x38, 0x00}, C, true},  // SEC, BRK
-		{"CLI", []uint8{0x58, 0x00}, I, false}, // CLI, BRK
-		{"SEI", []uint8{0x78, 0x00}, I, true},  // SEI, BRK
-		{"CLD", []uint8{0xD8, 0x00}, D, false}, // CLD, BRK
-		{"SED", []uint8{0xF8, 0x00}, D, true},  // SED, BRK
-		{"CLV", []uint8{0xB8, 0x00}, V, false}, // CLV, BRK
+		{"CLC", []uint8{0x18, 0x00}, C, U | I | C, U | I, 2}, // CLC, BRK (Start with C set)
+		{"SEC", []uint8{0x38, 0x00}, C, U | I, U | I | C, 2}, // SEC, BRK (Start with C clear)
+		{"CLI", []uint8{0x58, 0x00}, I, U | I, U, 2},         // CLI, BRK (Start with I set)
+		{"SEI", []uint8{0x78, 0x00}, I, U, U | I, 2},         // SEI, BRK (Start with I clear)
+		{"CLD", []uint8{0xD8, 0x00}, D, U | I | D, U | I, 2}, // CLD, BRK (Start with D set)
+		{"SED", []uint8{0xF8, 0x00}, D, U | I, U | I | D, 2}, // SED, BRK (Start with D clear)
+		{"CLV", []uint8{0xB8, 0x00}, V, U | I | V, U | I, 2}, // CLV, BRK (Start with V set)
 	}
 
 	startAddr := uint16(0x8000)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Get fresh instances for isolation
-			cpu, bus = setupCPU()
+			cpu, bus := setupCPU()
 			bus.load(startAddr, tt.program)
-			// Set flags opposite to expected before running
-			cpu.setFlag(tt.flag, !tt.expected)
-			// Ensure U flag is set correctly before execution, and I if needed for CLI/SEI setup
-			cpu.P = U
-			if tt.name == "CLI" { // Start with I set if testing CLI
-				cpu.P |= I
-			} else if tt.name == "SEI" { // Start with I clear if testing SEI
-				// cpu.P is already I=0 here
-			} else { // For others, default I=1 is fine from Reset
-				cpu.P |= I
-			}
-
 			cpu.PC = startAddr
-			cpu.cycles = 0 // Start execution immediately
+			cpu.P = tt.initialP // Set initial flags
+			cpu.cycles = 0      // Start execution immediately
 
-			runUntilBrk(cpu, bus, 10)
+			cyclesRun := runCycles(cpu, tt.expectedCycles) // Run the flag instruction
+			if cyclesRun != uint64(tt.expectedCycles) {
+				t.Logf("%s warning: Cycle count mismatch. Expected %d, executed %d", tt.name, tt.expectedCycles, cyclesRun)
+			}
 
-			if cpu.getFlag(tt.flag) != tt.expected {
-				t.Errorf("%s failed: Expected flag %v to be %v, got %v (P=0x%02X)",
-					tt.name, tt.flag, tt.expected, cpu.getFlag(tt.flag), cpu.P)
+			// **** VVV CHECK FLAGS *IMMEDIATELY* AFTER INSTRUCTION VVV ****
+			checkFlags(t, tt.name, cpu, tt.expectedP)
+			// **** ^^^ CHECK FLAGS *IMMEDIATELY* AFTER INSTRUCTION ^^^ ****
+
+			// Now run BRK if present *after* the check
+			if len(tt.program) > 1 && tt.program[1] == 0x00 {
+				// Check if PC is pointing at the expected BRK location
+				if bus.Read(cpu.PC) == 0x00 {
+					brkCyclesRun := runCycles(cpu, 7) // Execute the BRK (7 cycles)
+					if brkCyclesRun != 7 {
+						t.Logf("%s BRK execution cycle warning: Expected 7, got %d", tt.name, brkCyclesRun)
+					}
+				} else {
+					// This error indicates PC didn't land where expected after the flag instruction
+					t.Errorf("%s failed: PC not at BRK (0x%04X) after instruction. PC=0x%04X", tt.name, startAddr+1, cpu.PC)
+				}
 			}
-			// Verify U flag is still set
-			if !cpu.getFlag(U) {
-				t.Errorf("%s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
-			}
+			// We don't need to check flags again after the BRK for this test's purpose.
 		})
 	}
 }
@@ -964,134 +1027,141 @@ func TestNopInstructions(t *testing.T) {
 
 // TestRegisterTransfers tests TAX, TAY, TXA, TYA, TSX, TXS.
 func TestRegisterTransfers(t *testing.T) {
-	cpu, bus := setupCPU()
 	startAddr := uint16(0x0400)
-	testVal := uint8(0xB7) // A value that is non-zero and negative
 
 	tests := []struct {
 		name    string
 		program []uint8
-		setup   func()
-		verify  func()
+		setup   func(cpu *CPU)
+		verify  func(t *testing.T, cpu *CPU, initialP Flags)
+		cycles  uint
 	}{
 		{
-			"TAX", []uint8{0xAA, 0x00}, // TAX, BRK
-			func() { cpu.A = testVal; cpu.X = 0 },
-			func() {
-				if cpu.X != testVal {
-					t.Errorf("TAX failed: Expected X=0x%02X, got 0x%02X", testVal, cpu.X)
+			name: "TAX NonZero", program: []uint8{0xAA, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.A = 0xB7; c.X = 0; c.P = U | I },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.X != 0xB7 {
+					t.Errorf("TAX failed: Expected X=0xB7, got 0x%02X", c.X)
 				}
-				if cpu.getFlag(Z) {
-					t.Errorf("TAX failed: Expected Z=false, got true")
-				}
-				if !cpu.getFlag(N) {
-					t.Errorf("TAX failed: Expected N=true, got false")
-				}
+				checkFlags(t, "TAX NonZero", c, U|I|N) // N should be set
 			},
 		},
 		{
-			"TAY", []uint8{0xA8, 0x00}, // TAY, BRK
-			func() { cpu.A = testVal; cpu.Y = 0 },
-			func() {
-				if cpu.Y != testVal {
-					t.Errorf("TAY failed: Expected Y=0x%02X, got 0x%02X", testVal, cpu.Y)
+			name: "TAX Zero", program: []uint8{0xAA, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.A = 0x00; c.X = 0xFF; c.P = U | I | N },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.X != 0x00 {
+					t.Errorf("TAX failed: Expected X=0x00, got 0x%02X", c.X)
 				}
-				if cpu.getFlag(Z) {
-					t.Errorf("TAY failed: Expected Z=false, got true")
-				}
-				if !cpu.getFlag(N) {
-					t.Errorf("TAY failed: Expected N=true, got false")
-				}
+				checkFlags(t, "TAX Zero", c, U|I|Z) // Z should be set, N clear
 			},
 		},
 		{
-			"TXA", []uint8{0x8A, 0x00}, // TXA, BRK
-			func() { cpu.X = testVal; cpu.A = 0 },
-			func() {
-				if cpu.A != testVal {
-					t.Errorf("TXA failed: Expected A=0x%02X, got 0x%02X", testVal, cpu.A)
+			name: "TAY NonZero", program: []uint8{0xA8, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.A = 0x81; c.Y = 0; c.P = U | I },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.Y != 0x81 {
+					t.Errorf("TAY failed: Expected Y=0x81, got 0x%02X", c.Y)
 				}
-				if cpu.getFlag(Z) {
-					t.Errorf("TXA failed: Expected Z=false, got true")
-				}
-				if !cpu.getFlag(N) {
-					t.Errorf("TXA failed: Expected N=true, got false")
-				}
+				checkFlags(t, "TAY NonZero", c, U|I|N) // N should be set
 			},
 		},
 		{
-			"TYA", []uint8{0x98, 0x00}, // TYA, BRK
-			func() { cpu.Y = testVal; cpu.A = 0 },
-			func() {
-				if cpu.A != testVal {
-					t.Errorf("TYA failed: Expected A=0x%02X, got 0x%02X", testVal, cpu.A)
+			name: "TAY Zero", program: []uint8{0xA8, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.A = 0x00; c.Y = 0xCC; c.P = U | I | N },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.Y != 0x00 {
+					t.Errorf("TAY failed: Expected Y=0x00, got 0x%02X", c.Y)
 				}
-				if cpu.getFlag(Z) {
-					t.Errorf("TYA failed: Expected Z=false, got true")
-				}
-				if !cpu.getFlag(N) {
-					t.Errorf("TYA failed: Expected N=true, got false")
-				}
+				checkFlags(t, "TAY Zero", c, U|I|Z) // Z should be set, N clear
 			},
 		},
 		{
-			"TSX", []uint8{0xBA, 0x00}, // TSX, BRK
-			func() { cpu.SP = testVal; cpu.X = 0 },
-			func() {
-				if cpu.X != testVal {
-					t.Errorf("TSX failed: Expected X=0x%02X, got 0x%02X", testVal, cpu.X)
+			name: "TXA NonZero", program: []uint8{0x8A, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.X = 0xD0; c.A = 0; c.P = U | I },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.A != 0xD0 {
+					t.Errorf("TXA failed: Expected A=0xD0, got 0x%02X", c.A)
 				}
-				if cpu.getFlag(Z) {
-					t.Errorf("TSX failed: Expected Z=false, got true")
-				}
-				if !cpu.getFlag(N) { // N flag reflects bit 7 of SP
-					t.Errorf("TSX failed: Expected N=true, got false")
-				}
+				checkFlags(t, "TXA NonZero", c, U|I|N) // N should be set
 			},
 		},
 		{
-			"TXS", []uint8{0x9A, 0x00}, // TXS, BRK
-			func() { cpu.X = testVal; cpu.SP = 0 },
-			func() {
-				if cpu.SP != testVal {
-					t.Errorf("TXS failed: Expected SP=0x%02X, got 0x%02X", testVal, cpu.SP)
+			name: "TXA Zero", program: []uint8{0x8A, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.X = 0x00; c.A = 0xFF; c.P = U | I | N },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.A != 0x00 {
+					t.Errorf("TXA failed: Expected A=0x00, got 0x%02X", c.A)
+				}
+				checkFlags(t, "TXA Zero", c, U|I|Z) // Z should be set, N clear
+			},
+		},
+		{
+			name: "TYA NonZero", program: []uint8{0x98, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.Y = 0xA0; c.A = 0; c.P = U | I },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.A != 0xA0 {
+					t.Errorf("TYA failed: Expected A=0xA0, got 0x%02X", c.A)
+				}
+				checkFlags(t, "TYA NonZero", c, U|I|N) // N should be set
+			},
+		},
+		{
+			name: "TYA Zero", program: []uint8{0x98, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.Y = 0x00; c.A = 0xFF; c.P = U | I | N },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.A != 0x00 {
+					t.Errorf("TYA failed: Expected A=0x00, got 0x%02X", c.A)
+				}
+				checkFlags(t, "TYA Zero", c, U|I|Z) // Z should be set, N clear
+			},
+		},
+		{
+			name: "TSX NonZero", program: []uint8{0xBA, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.SP = 0x9F; c.X = 0; c.P = U | I },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.X != 0x9F {
+					t.Errorf("TSX failed: Expected X=0x9F, got 0x%02X", c.X)
+				}
+				checkFlags(t, "TSX NonZero", c, U|I|N) // N should be set based on SP
+			},
+		},
+		{
+			name: "TSX Zero", program: []uint8{0xBA, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.SP = 0x00; c.X = 0xFF; c.P = U | I | N },
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.X != 0x00 {
+					t.Errorf("TSX failed: Expected X=0x00, got 0x%02X", c.X)
+				}
+				checkFlags(t, "TSX Zero", c, U|I|Z) // Z should be set, N clear
+			},
+		},
+		{
+			name: "TXS", program: []uint8{0x9A, 0x00}, cycles: 2,
+			setup: func(c *CPU) { c.X = 0xBE; c.SP = 0xFF; c.P = U | I | N | Z | C | V }, // Set lots of flags
+			verify: func(t *testing.T, c *CPU, initialP Flags) {
+				if c.SP != 0xBE {
+					t.Errorf("TXS failed: Expected SP=0xBE, got 0x%02X", c.SP)
 				}
 				// TXS does NOT affect flags
+				checkFlags(t, "TXS", c, initialP)
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cpu, bus = setupCPU() // Fresh instances
-			if tt.setup != nil {
-				tt.setup()
-			}
-			// Save initial flags to check if TXS modified them incorrectly
-			initialFlags := cpu.P
+			cpu, bus := setupCPU() // Fresh instances
+			tt.setup(cpu)
+			initialFlags := cpu.P // Capture flags *after* setup
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
 			cpu.cycles = 0
 
-			runUntilBrk(cpu, bus, 10)
+			runCycles(cpu, tt.cycles) // Run for the instruction cycles
 
-			if tt.verify != nil {
-				tt.verify()
-			}
-			// Special check for TXS flags
-			if tt.name == "TXS" {
-				// Allow U flag to be set if it wasn't (it should always end up set)
-				expectedP := initialFlags | U
-				if cpu.P != expectedP {
-					t.Errorf("TXS failed: Flags were modified. Expected P=0x%02X, got 0x%02X", expectedP, cpu.P)
-				}
-			} else {
-				// For other transfers, ensure U is set
-				if !cpu.getFlag(U) {
-					t.Errorf("%s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
-				}
-			}
+			tt.verify(t, cpu, initialFlags)
 		})
 	}
 }
@@ -2581,14 +2651,280 @@ func TestCompareInstructions(t *testing.T) {
 	}
 }
 
+// --- Arithmetic Tests (NEW) ---
+
+// TestADC tests the Add with Carry instruction.
+func TestADC(t *testing.T) {
+	const baseAddr = 0xA000
+
+	type ADCTest struct {
+		name        string
+		mode        string // "IMM", "ZP0", "ABS", "ZPX", "ABX", "ABY", "IZX", "IZY"
+		opcode      uint8
+		initialA    uint8
+		operand     uint8
+		initialC    bool
+		decimalMode bool
+		expectedA   uint8
+		expectedP   Flags // Expected flags state (NVCZ). U and I are assumed set unless cleared.
+		cycles      uint
+		memAddr     uint16   // Base address for ZP/ABS/Indirect modes
+		setupXY     [2]uint8 // X, Y values for setup
+		pageCrossed bool     // Expected page cross? (for +1 cycle check)
+	}
+
+	tests := []ADCTest{
+		// --- Binary Mode Tests (D=0) ---
+		{"Bin IMM Basic", "IMM", 0x69, 0x10, 0x05, false, false, 0x15, U | I, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM CarryIn", "IMM", 0x69, 0x10, 0x05, true, false, 0x16, U | I, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM CarryOut", "IMM", 0x69, 0xFF, 0x01, false, false, 0x00, U | I | Z | C, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM CarryInOut", "IMM", 0x69, 0xFF, 0x01, true, false, 0x01, U | I | C, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM Zero", "IMM", 0x69, 0x00, 0x00, false, false, 0x00, U | I | Z, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM Zero CarryIn", "IMM", 0x69, 0x00, 0x00, true, false, 0x01, U | I, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM Negative", "IMM", 0x69, 0x00, 0x80, false, false, 0x80, U | I | N, 2, 0, [2]uint8{0, 0}, false},
+		{"Bin IMM Overflow Pos", "IMM", 0x69, 0x7F, 0x01, false, false, 0x80, U | I | N | V, 2, 0, [2]uint8{0, 0}, false}, // 7F+01=80 (Pos+Pos=Neg)
+		// FIX: Expected C=1 here
+		{"Bin IMM Overflow Neg", "IMM", 0x69, 0x80, 0xFF, false, false, 0x7F, U | I | V | C, 2, 0, [2]uint8{0, 0}, false}, // 80+(-1)=7F (Neg+Neg=Pos) - Result 0x17F -> C=1, V=1
+		{"Bin ZP0", "ZP0", 0x65, 0x20, 0x30, false, false, 0x50, U | I, 3, 0x44, [2]uint8{0, 0}, false},
+		{"Bin ABS", "ABS", 0x6D, 0x80, 0x80, true, false, 0x01, U | I | C | V, 4, 0x1234, [2]uint8{0, 0}, false},  // 80+80+1=101 (Neg+Neg=Pos)
+		{"Bin ABX Cross", "ABX", 0x7D, 0x10, 0x20, false, false, 0x30, U | I, 5, 0x20FF, [2]uint8{0x02, 0}, true}, // 20FF+2=2101
+
+		// --- Decimal Mode Tests (D=1) ---
+		{"Dec IMM 1+1 C=0", "IMM", 0x69, 0x01, 0x01, false, true, 0x02, U | I | D, 2, 0, [2]uint8{0, 0}, false},
+		{"Dec IMM 8+1 C=0", "IMM", 0x69, 0x08, 0x01, false, true, 0x09, U | I | D, 2, 0, [2]uint8{0, 0}, false},
+		{"Dec IMM 9+1 C=0", "IMM", 0x69, 0x09, 0x01, false, true, 0x10, U | I | D, 2, 0, [2]uint8{0, 0}, false}, // 9+1=10 (BCD)
+		{"Dec IMM 9+1 C=1", "IMM", 0x69, 0x09, 0x01, true, true, 0x11, U | I | D, 2, 0, [2]uint8{0, 0}, false},  // 9+1+1=11 (BCD)
+		{"Dec IMM 10+10 C=0", "IMM", 0x69, 0x10, 0x10, false, true, 0x20, U | I | D, 2, 0, [2]uint8{0, 0}, false},
+		{"Dec IMM 18+27 C=1", "IMM", 0x69, 0x18, 0x27, true, true, 0x46, U | I | D, 2, 0, [2]uint8{0, 0}, false}, // 18+27+1 = 46
+		// FIX: Expected N=1 here (binary 99+1=9A)
+		{"Dec IMM 99+1 C=0", "IMM", 0x69, 0x99, 0x01, false, true, 0x00, U | I | D | N | Z | C, 2, 0, [2]uint8{0, 0}, false}, // 99+1=00, C=1. Binary 9A -> N=1
+		// FIX: Expected N=1 here (binary 99+0+1=9A)
+		{"Dec IMM 99+0 C=1", "IMM", 0x69, 0x99, 0x00, true, true, 0x00, U | I | D | N | Z | C, 2, 0, [2]uint8{0, 0}, false}, // 99+0+1=00, C=1. Binary 9A -> N=1
+		{"Dec IMM 00+00 C=0", "IMM", 0x69, 0x00, 0x00, false, true, 0x00, U | I | D | Z, 2, 0, [2]uint8{0, 0}, false},
+		{"Dec IMM 00+00 C=1", "IMM", 0x69, 0x00, 0x00, true, true, 0x01, U | I | D, 2, 0, [2]uint8{0, 0}, false},
+		{"Dec IMM N Flag Test", "IMM", 0x69, 0x70, 0x10, false, true, 0x80, U | I | D | N | V, 2, 0, [2]uint8{0, 0}, false}, // 70+10=80. Binary 70+10=80 (N=1, V=1). BCD result is 80.
+		{"Dec ZP0", "ZP0", 0x65, 0x45, 0x23, true, true, 0x69, U | I | D, 3, 0x55, [2]uint8{0, 0}, false},                   // 45+23+1=69
+		// FIX: Expected N=1, V=1 here (binary 50+50=A0 -> N=1, V=1)
+		{"Dec ABS Carry", "ABS", 0x6D, 0x50, 0x50, false, true, 0x00, U | I | D | N | V | Z | C, 4, 0x3456, [2]uint8{0, 0}, false}, // 50+50 = 00, C=1. Binary A0 -> N=1, V=1
+	}
+
+	// Rest of TestADC loop remains the same
+	// ...
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus := setupCPU()
+
+			// Setup initial state
+			cpu.A = tt.initialA
+			cpu.X = tt.setupXY[0]
+			cpu.Y = tt.setupXY[1]
+			cpu.setFlag(C, tt.initialC)
+			cpu.setFlag(D, tt.decimalMode)
+			cpu.P |= I | U                // Ensure I, U are set (base state)
+			initialPFlags := tt.expectedP // Expected flags *after* operation
+			// We need to manually ensure I, U are part of the expected flags if they weren't explicitly set
+			if (initialPFlags & I) == 0 {
+				initialPFlags |= I
+			}
+			if (initialPFlags & U) == 0 {
+				initialPFlags |= U
+			}
+			if tt.decimalMode {
+				if (initialPFlags & D) == 0 {
+					initialPFlags |= D
+				}
+			}
+
+			var program []uint8
+			addrArgLow := uint8(tt.memAddr & 0xFF)
+			addrArgHigh := uint8(tt.memAddr >> 8)
+
+			// Construct program and setup memory/bus
+			switch tt.mode {
+			case "IMM":
+				program = []uint8{tt.opcode, tt.operand, 0x00}
+			case "ZP0":
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				bus.Write(uint16(addrArgLow), tt.operand)
+			case "ABS":
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				bus.Write(tt.memAddr, tt.operand)
+			case "ZPX":
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				effectiveAddr := (uint16(addrArgLow) + uint16(cpu.X)) & 0xFF
+				bus.Write(effectiveAddr, tt.operand)
+			case "ABX":
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				effectiveAddr := tt.memAddr + uint16(cpu.X)
+				bus.Write(effectiveAddr, tt.operand)
+			case "ABY":
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				effectiveAddr := tt.memAddr + uint16(cpu.Y)
+				bus.Write(effectiveAddr, tt.operand)
+			case "IZX":
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				zpLookupAddr := (uint16(addrArgLow) + uint16(cpu.X)) & 0xFF
+				targetAddr := uint16(0xBEEF) // Dummy target address for setup
+				bus.Write(zpLookupAddr, uint8(targetAddr&0xFF))
+				bus.Write((zpLookupAddr+1)&0xFF, uint8(targetAddr>>8))
+				bus.Write(targetAddr, tt.operand)
+			case "IZY":
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				baseAddrLow := uint16(addrArgLow)
+				baseTarget := uint16(0xC000) // Dummy base address for setup
+				bus.Write(baseAddrLow, uint8(baseTarget&0xFF))
+				bus.Write((baseAddrLow+1)&0xFF, uint8(baseTarget>>8))
+				effectiveAddr := baseTarget + uint16(cpu.Y)
+				bus.Write(effectiveAddr, tt.operand)
+			default:
+				t.Fatalf("%s: Unsupported addressing mode '%s' in test setup", tt.name, tt.mode)
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.cycles = 0
+
+			// Execute
+			cyclesRun := runCycles(cpu, tt.cycles)
+			expectedRunCycles := uint64(tt.cycles)
+			// Add check for page cross cycle addition if needed
+			// if tt.pageCrossed { expectedRunCycles++ } // Simple check, might need more nuance
+			if cyclesRun != expectedRunCycles {
+				t.Logf("%s warning: Cycle count mismatch. Expected %d, executed %d", tt.name, expectedRunCycles, cyclesRun)
+			}
+
+			// Verify results
+			if cpu.A != tt.expectedA {
+				t.Errorf("%s failed: Expected A=0x%02X, got A=0x%02X", tt.name, tt.expectedA, cpu.A)
+			}
+			checkFlags(t, tt.name, cpu, initialPFlags) // Use the adjusted initialPFlags
+		})
+	}
+}
+
+// TestSBC tests the Subtract with Carry instruction.
+func TestSBC(t *testing.T) {
+	const baseAddr = 0xB000
+
+	type SBCTest struct {
+		name        string
+		mode        string // "IMM", "ZP0", "ABS", etc.
+		opcode      uint8
+		initialA    uint8
+		operand     uint8
+		initialC    bool // C=1 means NO borrow, C=0 means borrow
+		decimalMode bool
+		expectedA   uint8
+		expectedP   Flags // Expected flags state (NVCZ). U and I are assumed set. C = 1 if no borrow occurred.
+		cycles      uint
+		memAddr     uint16
+		setupXY     [2]uint8
+		pageCrossed bool
+	}
+
+	tests := []SBCTest{
+		// --- Binary Mode Tests (D=0) ---
+		// C=1 (No Borrow In)
+		{"Bin IMM 5-3 C=1", "IMM", 0xE9, 0x05, 0x03, true, false, 0x02, U | I | C, 2, 0, [2]uint8{0, 0}, false},     // 5-3 = 2 >= 0 (C=1)
+		{"Bin IMM 3-5 C=1", "IMM", 0xE9, 0x03, 0x05, true, false, 0xFE, U | I | N, 2, 0, [2]uint8{0, 0}, false},     // 3-5 = -2 (FE) < 0 (C=0) -> N=1
+		{"Bin IMM 0-1 C=1", "IMM", 0xE9, 0x00, 0x01, true, false, 0xFF, U | I | N, 2, 0, [2]uint8{0, 0}, false},     // 0-1 = -1 (FF) < 0 (C=0) -> N=1
+		{"Bin IMM 0-0 C=1", "IMM", 0xE9, 0x00, 0x00, true, false, 0x00, U | I | Z | C, 2, 0, [2]uint8{0, 0}, false}, // 0-0 = 0 >= 0 (C=1, Z=1)
+		// FIX: Expected C=1 here (80-1 = 7F, no borrow needed)
+		{"Bin IMM 80-01 C=1", "IMM", 0xE9, 0x80, 0x01, true, false, 0x7F, U | I | V | C, 2, 0, [2]uint8{0, 0}, false},   // (-128)-1 = -129 -> wraps to 7F. V=1, C=1 (no borrow)
+		{"Bin IMM 7F-(-1) C=1", "IMM", 0xE9, 0x7F, 0xFF, true, false, 0x80, U | I | N | V, 2, 0, [2]uint8{0, 0}, false}, // 127-(-1) = 128 -> wraps to 80. V=1, C=0 (borrow occurred)
+
+		// C=0 (Borrow In = 1)
+		{"Bin IMM 5-3 C=0", "IMM", 0xE9, 0x05, 0x03, false, false, 0x01, U | I | C, 2, 0, [2]uint8{0, 0}, false},            // 5-3-1 = 1 >= 0 (C=1)
+		{"Bin IMM 3-5 C=0", "IMM", 0xE9, 0x03, 0x05, false, false, 0xFD, U | I | N, 2, 0, [2]uint8{0, 0}, false},            // 3-5-1 = -3 (FD) < 0 (C=0) -> N=1
+		{"Bin ZP0 80-80 C=0", "ZP0", 0xE5, 0x80, 0x80, false, false, 0xFF, U | I | N, 3, 0x66, [2]uint8{0, 0}, false},       // 80-80-1 = -1 (FF) < 0 (C=0) -> N=1
+		{"Bin ABS 02-01 C=0", "ABS", 0xED, 0x02, 0x01, false, false, 0x00, U | I | Z | C, 4, 0x4444, [2]uint8{0, 0}, false}, // 2-1-1 = 0 >= 0 (C=1, Z=1)
+
+		// --- Decimal Mode Tests (D=1) ---
+		// C=1 (No Borrow In)
+		{"Dec IMM 5-3 C=1", "IMM", 0xE9, 0x05, 0x03, true, true, 0x02, U | I | D | C, 2, 0, [2]uint8{0, 0}, false},       // 5-3=2, C=1
+		{"Dec IMM 10-1 C=1", "IMM", 0xE9, 0x10, 0x01, true, true, 0x09, U | I | D | C, 2, 0, [2]uint8{0, 0}, false},      // 10-1=9, C=1
+		{"Dec IMM 00-1 C=1", "IMM", 0xE9, 0x00, 0x01, true, true, 0x99, U | I | D | N, 2, 0, [2]uint8{0, 0}, false},      // 00-1=99 (BCD borrow), C=0, N=1 (based on binary intermediate 00-01=FF)
+		{"Dec IMM 00-0 C=1", "IMM", 0xE9, 0x00, 0x00, true, true, 0x00, U | I | D | Z | C, 2, 0, [2]uint8{0, 0}, false},  // 0-0=0, C=1, Z=1
+		{"Dec IMM 90-01 C=1", "IMM", 0xE9, 0x90, 0x01, true, true, 0x89, U | I | D | N | C, 2, 0, [2]uint8{0, 0}, false}, // 90-1=89, C=1, N=1 (based on binary 90-01=8F)
+
+		// C=0 (Borrow In = 1)
+		{"Dec IMM 5-3 C=0", "IMM", 0xE9, 0x05, 0x03, false, true, 0x01, U | I | D | C, 2, 0, [2]uint8{0, 0}, false},        // 5-3-1=1, C=1
+		{"Dec IMM 10-1 C=0", "IMM", 0xE9, 0x10, 0x01, false, true, 0x08, U | I | D | C, 2, 0, [2]uint8{0, 0}, false},       // 10-1-1=8, C=1
+		{"Dec IMM 00-1 C=0", "IMM", 0xE9, 0x00, 0x01, false, true, 0x98, U | I | D | N, 2, 0, [2]uint8{0, 0}, false},       // 00-1-1=98 (BCD borrow), C=0, N=1 (based on binary 00-01-01=FE)
+		{"Dec ZP0 45-18 C=1", "ZP0", 0xE5, 0x45, 0x18, true, true, 0x27, U | I | D | C, 3, 0x77, [2]uint8{0, 0}, false},    // 45-18=27, C=1
+		{"Dec ABS 45-18 C=0", "ABS", 0xED, 0x45, 0x18, false, true, 0x26, U | I | D | C, 4, 0x5555, [2]uint8{0, 0}, false}, // 45-18-1=26, C=1
+	}
+
+	// Rest of TestSBC loop remains the same
+	// ...
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus := setupCPU()
+
+			// Setup initial state
+			cpu.A = tt.initialA
+			cpu.X = tt.setupXY[0]
+			cpu.Y = tt.setupXY[1]
+			cpu.setFlag(C, tt.initialC)
+			cpu.setFlag(D, tt.decimalMode)
+			cpu.P |= I | U                // Ensure I, U are set
+			initialPFlags := tt.expectedP // Expected flags *after* operation
+			// Manually ensure I, U, D are part of expected flags
+			if (initialPFlags & I) == 0 {
+				initialPFlags |= I
+			}
+			if (initialPFlags & U) == 0 {
+				initialPFlags |= U
+			}
+			if tt.decimalMode {
+				if (initialPFlags & D) == 0 {
+					initialPFlags |= D
+				}
+			}
+
+			var program []uint8
+			addrArgLow := uint8(tt.memAddr & 0xFF)
+			addrArgHigh := uint8(tt.memAddr >> 8)
+
+			// Construct program and setup memory/bus
+			switch tt.mode {
+			case "IMM":
+				program = []uint8{tt.opcode, tt.operand, 0x00}
+			case "ZP0":
+				program = []uint8{tt.opcode, addrArgLow, 0x00}
+				bus.Write(uint16(addrArgLow), tt.operand)
+			case "ABS":
+				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+				bus.Write(tt.memAddr, tt.operand)
+				// Add other modes (ZPX, ABX, ABY, IZX, IZY) if needed
+			default:
+				t.Fatalf("%s: Unsupported addressing mode '%s' in test setup", tt.name, tt.mode)
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.cycles = 0
+
+			// Execute
+			cyclesRun := runCycles(cpu, tt.cycles)
+			expectedRunCycles := uint64(tt.cycles)
+			// Adjust for page cross if applicable and tested
+			// if tt.pageCrossed { expectedRunCycles++ }
+			if cyclesRun != expectedRunCycles {
+				t.Logf("%s warning: Cycle count mismatch. Expected %d, executed %d", tt.name, expectedRunCycles, cyclesRun)
+			}
+
+			// Verify results
+			if cpu.A != tt.expectedA {
+				t.Errorf("%s failed: Expected A=0x%02X, got A=0x%02X", tt.name, tt.expectedA, cpu.A)
+			}
+			checkFlags(t, tt.name, cpu, initialPFlags) // Use adjusted expected flags
+		})
+	}
+}
+
 // --- Placeholder Tests for Complex Instructions ---
 // Add more tests here as you implement instructions like ADC, SBC, branches, shifts etc.
-
-func TestArithmeticPlaceholders(t *testing.T) {
-	t.Skip("Skipping arithmetic tests (ADC/SBC) - Implement instructions first.")
-	// TODO: Write tests for ADC (various modes, flags C/V/Z/N, decimal mode?)
-	// TODO: Write tests for SBC (various modes, flags C/V/Z/N, decimal mode?)
-}
 
 func TestIllegalOpcode(t *testing.T) {
 	t.Skip("Skipping illegal opcode test - Ensure XXX handler is robust.")

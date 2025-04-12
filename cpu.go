@@ -209,9 +209,14 @@ func (c *CPU) IND() uint8 {
 	c.PC++
 	ptr := (ptrHi << 8) | ptrLo
 
+	// Simulate the 6502 page boundary bug for indirect JMP:
+	// If the low byte of the pointer is $FF, the high byte is fetched
+	// from $xx00 instead of $xxFF + 1.
 	if ptrLo == 0x00FF {
-		c.addrAbs = (uint16(c.read(ptr&0xFF00)) << 8) | uint16(c.read(ptr))
+		hiByteAddr := ptr & 0xFF00 // Address of high byte wraps around page
+		c.addrAbs = (uint16(c.read(hiByteAddr)) << 8) | uint16(c.read(ptr))
 	} else {
+		// Normal case: read from ptr and ptr+1
 		c.addrAbs = (uint16(c.read(ptr+1)) << 8) | uint16(c.read(ptr))
 	}
 	return 0
@@ -271,11 +276,82 @@ func (c *CPU) setZNFlags(value uint8) {
 	c.setFlag(N, (value&0x80) > 0)
 }
 
+// ADC - Add with Carry
 func (c *CPU) ADC() uint8 {
 	c.fetchDataIfNeeded()
-	// TODO: Implement ADC logic (Add with Carry)
-	log.Printf("WARN: ADC instruction not implemented (Opcode: $%02X)", c.opcode)
-	return 0
+	var carry uint16 = 0
+	if c.getFlag(C) {
+		carry = 1
+	}
+
+	var temp uint16
+	var result uint8
+
+	if c.getFlag(D) {
+		// --- Decimal Mode ---
+		// N, V flags are officially undefined/unreliable in decimal mode.
+		// Common emulation practice is to set them based on the intermediate *binary* addition result.
+		// Z flag is set based on the final BCD result.
+		// C flag is set based on whether the BCD result exceeds 99.
+
+		// Calculate intermediate binary sum for N/V flags
+		binarySum := uint16(c.A) + uint16(c.fetchedData) + carry
+		// Set N based on bit 7 of binary sum
+		c.setFlag(N, (binarySum&0x80) > 0)
+		// Set V based on signed overflow of binary sum
+		// Overflow = sign(A) == sign(M) && sign(A) != sign(Result)
+		// Simplified: (~(A^M)) & (A^Result) & 0x80
+		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^binarySum)&0x0080) > 0)
+
+		// Perform BCD addition
+		low := (c.A & 0x0F) + (c.fetchedData & 0x0F) + uint8(carry)
+		if low > 9 {
+			low += 6 // BCD adjustment for lower nibble
+		}
+		// Calculate high nibble sum including carry from low nibble BCD adjustment
+		high := (c.A >> 4) + (c.fetchedData >> 4)
+		if low > 0x0F { // Check if carry generated from lower nibble (original sum > 9 or adjusted sum >= 16)
+			high++
+		}
+
+		if high > 9 {
+			high += 6 // BCD adjustment for upper nibble
+		}
+
+		// Set C flag if the BCD result (represented by high nibble) exceeded 9 ($99)
+		c.setFlag(C, high > 0x0F)
+
+		// Combine nibbles for the final BCD result
+		result = (high << 4) | (low & 0x0F)
+		c.A = result
+
+		// Set Z flag based on the final BCD result in A
+		c.setFlag(Z, c.A == 0)
+
+	} else {
+		// --- Binary Mode ---
+		temp = uint16(c.A) + uint16(c.fetchedData) + carry
+
+		// Set C flag (unsigned overflow)
+		c.setFlag(C, temp > 0xFF)
+
+		result = uint8(temp & 0x00FF)
+
+		// Set V flag (signed overflow)
+		// Check if signs of operands are the same but sign of result is different
+		// V = (~(A ^ M)) & (A ^ R) & 0x80 != 0
+		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^temp)&0x0080) > 0)
+
+		// Update Accumulator
+		c.A = result
+
+		// Set Z and N flags based on the result
+		c.setZNFlags(c.A)
+	}
+
+	// ADC potentially requires an extra cycle on page boundary crossing for certain indexed modes
+	// The addressing mode function already returned 1 if a page cross occurred.
+	return 1 // Return 1 indicating the operation itself takes at least 1 cycle, potentially more with page cross
 }
 
 func (c *CPU) AND() uint8 {
@@ -480,19 +556,25 @@ func (c *CPU) LSR() uint8 {
 	return 0
 }
 
+// NOP - No Operation
 func (c *CPU) NOP() uint8 {
+	// Some unofficial NOPs using indexed addressing might technically read
+	// from memory, potentially causing a page cross and taking an extra cycle.
+	// We handle this by having the addressing mode function return 1 if a cross occurs,
+	// and returning 1 from here allows that cycle to be added.
+	// Official NOP (EA) and simple unofficial NOPs (IMP, IMM, ZP0) don't have this.
 	switch c.opcode {
-	case 0x1C:
-	case 0x3C:
-	case 0x5C:
-	case 0x7C:
-	case 0xDC:
-	case 0xFC:
-		// Need to fetch data even if not used, ABX addressing mode does reads
-		c.fetchDataIfNeeded()
-		return 1 // Example: May take extra cycle on page cross
+	// NOPs with ABX addressing mode that can cross pages:
+	case 0x1C, 0x3C, 0x5C, 0x7C, 0xDC, 0xFC:
+		// These modes *do* calculate an address, even if not used.
+		// Fetch might not be strictly necessary for NOP, but the address calc is.
+		// The AddrMode function already returns 1 on page cross.
+		return 1 // Signal that page cross cycle might apply
+	// NOPs with IZY addressing mode that can cross pages:
+	// (None documented, but if added, would need similar handling)
+	default:
+		return 0 // No potential for extra cycle from page cross
 	}
-	return 0
 }
 
 func (c *CPU) ORA() uint8 {
@@ -580,25 +662,83 @@ func (c *CPU) RTS() uint8 {
 	return 0
 }
 
-// SBC - *Fix bool conversion*
+// SBC - Subtract with Carry (Borrow)
 func (c *CPU) SBC() uint8 {
 	c.fetchDataIfNeeded()
-	value := uint16(c.fetchedData) ^ 0x00FF
-
-	// Explicitly convert carry flag bool to uint16
-	var carry uint16
+	// SBC is effectively A - M - (1 - C)
+	// which is equivalent to ADC with A + (~M) + C
+	value := uint16(c.fetchedData) ^ 0x00FF // ~M (one's complement)
+	var carry uint16 = 0                    // Carry In for the A + (~M) + C operation
 	if c.getFlag(C) {
 		carry = 1
 	}
 
-	temp := uint16(c.A) + value + carry // Use the carry variable
+	var temp uint16
+	var result uint8
 
-	c.setFlag(C, (temp&0xFF00) > 0)
-	c.setZNFlags(uint8(temp & 0x00FF))
-	overflow := ((uint16(c.A)^temp)&(value^temp))&0x0080 > 0
-	c.setFlag(V, overflow)
-	c.A = uint8(temp & 0x00FF)
+	if c.getFlag(D) {
+		// --- Decimal Mode ---
+		// Similar to ADC, N/V flags based on intermediate binary result, C/Z on final BCD result.
 
+		// Calculate intermediate binary result A + (~M) + C for N/V flags
+		binarySum := uint16(c.A) + value + carry
+		// Set N based on bit 7 of binary sum
+		c.setFlag(N, (binarySum&0x80) > 0)
+		// Set V based on signed overflow of binary sum (A + ~M + C)
+		// Overflow = sign(A) == sign(~M) && sign(A) != sign(Result)
+		// Simplified: (~(A ^ ~M)) & (A ^ Result) & 0x80
+		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^binarySum)&0x0080) > 0)
+
+		// Perform BCD subtraction (A - M - borrow)
+		borrow_in := 1 - uint8(carry) // Convert C flag to borrow (0 or 1)
+
+		// Use int16 for intermediate subtraction to handle potential negative results easily
+		sub_res := int16(c.A) - int16(c.fetchedData) - int16(borrow_in)
+
+		low := (int16(c.A&0x0F) - int16(c.fetchedData&0x0F) - int16(borrow_in))
+		borrow_low := uint8(0)
+		if low < 0 {
+			low -= 6 // BCD adjust low nibble
+			borrow_low = 1
+		}
+
+		high := (int16(c.A>>4) - int16(c.fetchedData>>4) - int16(borrow_low))
+		if high < 0 {
+			high -= 6 // BCD adjust high nibble
+		}
+
+		// Combine nibbles
+		result = (uint8(high&0x0F) << 4) | uint8(low&0x0F)
+		c.A = result
+
+		// Set C flag: Set if result >= 0 (no borrow needed overall)
+		c.setFlag(C, sub_res >= 0)
+		// Set Z flag based on the final BCD result
+		c.setFlag(Z, c.A == 0)
+
+	} else {
+		// --- Binary Mode ---
+		temp = uint16(c.A) + value + carry
+
+		// Set C flag: Based on the carry out of the A + ~M + C addition.
+		// This is equivalent to "no borrow needed" for A - M - (1-C).
+		c.setFlag(C, temp > 0xFF)
+
+		result = uint8(temp & 0x00FF)
+
+		// Set V flag (signed overflow)
+		// V = (A ^ M) & (A ^ R) & 0x80 != 0  (for A - M - B)
+		// Equivalently use A + ~M + C: V = (~(A ^ ~M)) & (A ^ R) & 0x80
+		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^temp)&0x0080) > 0)
+
+		// Update Accumulator
+		c.A = result
+
+		// Set Z and N flags based on the result
+		c.setZNFlags(c.A)
+	}
+
+	// SBC potentially requires an extra cycle on page boundary crossing
 	return 1
 }
 
@@ -1071,6 +1211,26 @@ func (c *CPU) GetState() string {
 
 	return fmt.Sprintf("PC:%04X A:%02X X:%02X Y:%02X P:%02X[%s] SP:%02X CYC:%d (%s $%02X)",
 		c.PC, c.A, c.X, c.Y, uint8(c.P), flagsStr, c.SP, c.totalCycles, instrName, c.opcode)
+}
+
+// formatFlags - Helper to create the NVUBDIZC string
+func formatFlags(p Flags) string {
+	flags := []struct {
+		flag Flags
+		char byte
+	}{
+		{N, 'N'}, {V, 'V'}, {U, 'U'}, {B, 'B'},
+		{D, 'D'}, {I, 'I'}, {Z, 'Z'}, {C, 'C'},
+	}
+	s := make([]byte, 8)
+	for i, f := range flags {
+		if (p & f.flag) != 0 {
+			s[i] = f.char
+		} else {
+			s[i] = '.'
+		}
+	}
+	return string(s)
 }
 
 // Disassemble - *Use reflect for AdrMode comparison*
