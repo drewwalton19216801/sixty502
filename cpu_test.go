@@ -52,14 +52,18 @@ func runCycles(cpu *CPU, cyclesToRun uint) uint64 {
 	targetTotalCycles := startTotalCycles + uint64(cyclesToRun)
 	for cpu.totalCycles < targetTotalCycles {
 		// Check if CPU is stuck (e.g., on an unimplemented BRK or infinite loop)
-		if cpu.cycles == 0 && cpu.lookup[cpu.read(cpu.PC)].Operate == nil {
-			fmt.Printf("Warning: CPU potentially stuck at PC=0x%04X, Opcode=0x%02X\n", cpu.PC, cpu.read(cpu.PC))
+		// Use Peek instruction definition safely
+		nextOpcode := cpu.read(cpu.PC)
+		if cpu.cycles == 0 && (cpu.lookup[nextOpcode].Operate == nil || getFuncPtr(cpu.lookup[nextOpcode].Operate) == getFuncPtr((*CPU).XXX)) {
+			// Check for explicit XXX or unimplemented operate func
+			fmt.Printf("Warning: CPU potentially stuck at PC=0x%04X, Opcode=0x%02X (%s)\n", cpu.PC, nextOpcode, cpu.lookup[nextOpcode].Name)
 			break // Avoid infinite loop in test
 		}
 		cpu.Clock()
 		// Add extra break condition if absolutely necessary
-		if cpu.totalCycles > targetTotalCycles+10 { // Safety break
-			fmt.Printf("Warning: Exceeded target cycles significantly in runCycles.\n")
+		if cpu.totalCycles > targetTotalCycles+20 { // Safety break increased slightly
+			fmt.Printf("Warning: Exceeded target cycles significantly in runCycles (Target: %d, Current: %d). Stuck at PC=0x%04X Op=0x%02X\n",
+				targetTotalCycles, cpu.totalCycles, cpu.PC, cpu.opcode)
 			break
 		}
 	}
@@ -128,7 +132,8 @@ func TestReset(t *testing.T) {
 	// Expect I and U flags to be set, others clear
 	expectedFlags := U | I
 	// Clear B flag just in case it was somehow set before reset (shouldn't happen)
-	cpu.P &= ^B
+	// This is slightly inaccurate, Reset doesn't explicitly clear B, it just sets P to U|I
+	// But we check against the expected U|I state.
 	if cpu.P != expectedFlags {
 		t.Errorf("Reset() failed: Expected P=0x%02X (%s), got 0x%02X (%s)",
 			expectedFlags, fmt.Sprintf("%08b", expectedFlags), cpu.P, fmt.Sprintf("%08b", cpu.P))
@@ -161,11 +166,21 @@ func TestFlagsInstructions(t *testing.T) {
 	startAddr := uint16(0x8000)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Get fresh instances for isolation
+			cpu, bus = setupCPU()
 			bus.load(startAddr, tt.program)
 			// Set flags opposite to expected before running
 			cpu.setFlag(tt.flag, !tt.expected)
-			// Ensure U flag is set correctly before execution
-			cpu.P = U | I
+			// Ensure U flag is set correctly before execution, and I if needed for CLI/SEI setup
+			cpu.P = U
+			if tt.name == "CLI" { // Start with I set if testing CLI
+				cpu.P |= I
+			} else if tt.name == "SEI" { // Start with I clear if testing SEI
+				// cpu.P is already I=0 here
+			} else { // For others, default I=1 is fine from Reset
+				cpu.P |= I
+			}
+
 			cpu.PC = startAddr
 			cpu.cycles = 0 // Start execution immediately
 
@@ -174,6 +189,10 @@ func TestFlagsInstructions(t *testing.T) {
 			if cpu.getFlag(tt.flag) != tt.expected {
 				t.Errorf("%s failed: Expected flag %v to be %v, got %v (P=0x%02X)",
 					tt.name, tt.flag, tt.expected, cpu.getFlag(tt.flag), cpu.P)
+			}
+			// Verify U flag is still set
+			if !cpu.getFlag(U) {
+				t.Errorf("%s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
 			}
 		})
 	}
@@ -496,11 +515,16 @@ func TestRegisterTransfers(t *testing.T) {
 				tt.verify()
 			}
 			// Special check for TXS flags
-			if tt.name == "TXS" && cpu.P != initialFlags {
+			if tt.name == "TXS" {
 				// Allow U flag to be set if it wasn't (it should always end up set)
 				expectedP := initialFlags | U
 				if cpu.P != expectedP {
 					t.Errorf("TXS failed: Flags were modified. Expected P=0x%02X, got 0x%02X", expectedP, cpu.P)
+				}
+			} else {
+				// For other transfers, ensure U is set
+				if !cpu.getFlag(U) {
+					t.Errorf("%s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
 				}
 			}
 		})
@@ -559,14 +583,17 @@ func TestStackOperations(t *testing.T) {
 		if !cpu.getFlag(N) {
 			t.Errorf("PLA failed: Expected N=true, got false")
 		}
+		if !cpu.getFlag(U) {
+			t.Errorf("PLA failed: U flag became unset (P=0x%02X)", cpu.P)
+		}
 	})
 
 	t.Run("PHP", func(t *testing.T) {
 		cpu, bus = setupCPU()
 		// Set some flags C=1, Z=0, I=0, D=0, V=1, N=1
-		cpu.P = C | V | N | U          // Start with I=0, D=0, Z=0; U always 1
-		expectedPushedP := cpu.P | B   // PHP pushes with B flag set
-		program := []uint8{0x08, 0x00} // PHP, BRK
+		cpu.P = C | V | N | U            // Start with I=0, D=0, Z=0; U always 1
+		expectedPushedP := cpu.P | B | U // PHP pushes with B flag set and U always set
+		program := []uint8{0x08, 0x00}   // PHP, BRK
 		bus.load(startAddr, program)
 		cpu.PC = startAddr
 		cpu.cycles = 0
@@ -579,12 +606,16 @@ func TestStackOperations(t *testing.T) {
 		}
 		pushedValue := bus.Read(stackBase + uint16(initialSP))
 		if Flags(pushedValue) != expectedPushedP {
-			t.Errorf("PHP failed: Expected P value 0x%02X on stack at 0x%04X, got 0x%02X",
-				expectedPushedP, stackBase+uint16(initialSP), pushedValue)
+			t.Errorf("PHP failed: Expected P value 0x%02X (%s) on stack at 0x%04X, got 0x%02X (%s)",
+				expectedPushedP, fmt.Sprintf("%08b", expectedPushedP), stackBase+uint16(initialSP),
+				pushedValue, fmt.Sprintf("%08b", pushedValue))
 		}
 		// Ensure original P register didn't gain the B flag permanently
 		if cpu.getFlag(B) {
 			t.Errorf("PHP failed: B flag was incorrectly set in P register after PHP.")
+		}
+		if !cpu.getFlag(U) {
+			t.Errorf("PHP failed: U flag became unset (P=0x%02X)", cpu.P)
 		}
 	})
 
@@ -600,7 +631,7 @@ func TestStackOperations(t *testing.T) {
 		cpu.cycles = 0
 		cpu.SP = initialSP - 1 // SP points to the last used location *before* pull
 		// Start with different flags to ensure they change
-		cpu.P = C | V | N | U
+		cpu.P = C | V | N | U // Ensure I is clear here
 
 		runUntilBrk(cpu, bus, 10)
 
@@ -608,7 +639,9 @@ func TestStackOperations(t *testing.T) {
 			t.Errorf("PLP failed: Expected SP=0x%02X, got 0x%02X", initialSP, cpu.SP)
 		}
 		// Expected flags after PLP: pulled flags excluding B, but ensuring U is set
-		expectedP := (valueToPull & ^B) | U
+		// PLP ignores the B flag from the stack, keeps the CPU's current B (which should be 0)
+		// U is always set.
+		expectedP := (valueToPull & ^B) | U // U is always set, B is ignored from stack
 		if cpu.P != expectedP {
 			t.Errorf("PLP failed: Expected P=0x%02X (%s), got 0x%02X (%s)",
 				expectedP, fmt.Sprintf("%08b", expectedP),
@@ -639,8 +672,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x10, expectedCycles: 3, // 2 base + 1 taken
 		},
 		{name: "BCC Taken Page Cross", opcode: 0x90, flag: C, flagValue: true, offset: -0x10,
-			setup:      func(cpu *CPU) { cpu.setFlag(C, false) },
-			expectedPC: baseAddr + 2 - 0x10, expectedCycles: 4, // 2 base + 1 taken + 1 cross
+			setup:      func(cpu *CPU) { cpu.setFlag(C, false); cpu.PC = baseAddr + 0x08 }, // Ensure cross from baseAddr+8+2=A -> baseAddr-10+A = baseAddr-6
+			expectedPC: baseAddr + 0x08 + 2 - 0x10, expectedCycles: 4,                      // 2 base + 1 taken + 1 cross
 		},
 		{name: "BCC Not Taken", opcode: 0x90, flag: C, flagValue: false, offset: 0x10,
 			setup:      func(cpu *CPU) { cpu.setFlag(C, true) },
@@ -653,8 +686,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x15, expectedCycles: 3,
 		},
 		{name: "BCS Taken Page Cross", opcode: 0xB0, flag: C, flagValue: false, offset: -0x05,
-			setup:      func(cpu *CPU) { cpu.setFlag(C, true) },
-			expectedPC: baseAddr + 2 - 0x05, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(C, true); cpu.PC = baseAddr + 0x02 }, // Cross from baseAddr+2+2=4 -> baseAddr+4-5 = baseAddr-1
+			expectedPC: baseAddr + 0x02 + 2 - 0x05, expectedCycles: 4,
 		},
 		{name: "BCS Not Taken", opcode: 0xB0, flag: C, flagValue: true, offset: 0x15,
 			setup:      func(cpu *CPU) { cpu.setFlag(C, false) },
@@ -667,8 +700,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x20, expectedCycles: 3,
 		},
 		{name: "BEQ Taken Page Cross", opcode: 0xF0, flag: Z, flagValue: false, offset: -0x20,
-			setup:      func(cpu *CPU) { cpu.setFlag(Z, true) },
-			expectedPC: baseAddr + 2 - 0x20, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(Z, true); cpu.PC = baseAddr + 0x10 }, // Cross 10+2=12 -> 12-20 = -E
+			expectedPC: baseAddr + 0x10 + 2 - 0x20, expectedCycles: 4,
 		},
 		{name: "BEQ Not Taken", opcode: 0xF0, flag: Z, flagValue: true, offset: 0x20,
 			setup:      func(cpu *CPU) { cpu.setFlag(Z, false) },
@@ -681,8 +714,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x25, expectedCycles: 3,
 		},
 		{name: "BNE Taken Page Cross", opcode: 0xD0, flag: Z, flagValue: true, offset: -0x08,
-			setup:      func(cpu *CPU) { cpu.setFlag(Z, false) },
-			expectedPC: baseAddr + 2 - 0x08, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(Z, false); cpu.PC = baseAddr + 0x04 }, // 4+2=6 -> 6-8=-2
+			expectedPC: baseAddr + 0x04 + 2 - 0x08, expectedCycles: 4,
 		},
 		{name: "BNE Not Taken", opcode: 0xD0, flag: Z, flagValue: false, offset: 0x25,
 			setup:      func(cpu *CPU) { cpu.setFlag(Z, true) },
@@ -695,8 +728,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x30, expectedCycles: 3,
 		},
 		{name: "BMI Taken Page Cross", opcode: 0x30, flag: N, flagValue: false, offset: -0x30,
-			setup:      func(cpu *CPU) { cpu.setFlag(N, true) },
-			expectedPC: baseAddr + 2 - 0x30, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(N, true); cpu.PC = baseAddr + 0x10 }, // 10+2=12 -> 12-30 = -1E
+			expectedPC: baseAddr + 0x10 + 2 - 0x30, expectedCycles: 4,
 		},
 		{name: "BMI Not Taken", opcode: 0x30, flag: N, flagValue: true, offset: 0x30,
 			setup:      func(cpu *CPU) { cpu.setFlag(N, false) },
@@ -709,8 +742,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x35, expectedCycles: 3,
 		},
 		{name: "BPL Taken Page Cross", opcode: 0x10, flag: N, flagValue: true, offset: -0x0A,
-			setup:      func(cpu *CPU) { cpu.setFlag(N, false) },
-			expectedPC: baseAddr + 2 - 0x0A, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(N, false); cpu.PC = baseAddr + 0x05 }, // 5+2=7 -> 7-A = -3
+			expectedPC: baseAddr + 0x05 + 2 - 0x0A, expectedCycles: 4,
 		},
 		{name: "BPL Not Taken", opcode: 0x10, flag: N, flagValue: false, offset: 0x35,
 			setup:      func(cpu *CPU) { cpu.setFlag(N, true) },
@@ -723,8 +756,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x40, expectedCycles: 3,
 		},
 		{name: "BVC Taken Page Cross", opcode: 0x50, flag: V, flagValue: true, offset: -0x40,
-			setup:      func(cpu *CPU) { cpu.setFlag(V, false) },
-			expectedPC: baseAddr + 2 - 0x40, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(V, false); cpu.PC = baseAddr + 0x20 }, // 20+2=22 -> 22-40 = -1E
+			expectedPC: baseAddr + 0x20 + 2 - 0x40, expectedCycles: 4,
 		},
 		{name: "BVC Not Taken", opcode: 0x50, flag: V, flagValue: false, offset: 0x40,
 			setup:      func(cpu *CPU) { cpu.setFlag(V, true) },
@@ -737,8 +770,8 @@ func TestBranchInstructions(t *testing.T) {
 			expectedPC: baseAddr + 2 + 0x45, expectedCycles: 3,
 		},
 		{name: "BVS Taken Page Cross", opcode: 0x70, flag: V, flagValue: false, offset: -0x0C,
-			setup:      func(cpu *CPU) { cpu.setFlag(V, true) },
-			expectedPC: baseAddr + 2 - 0x0C, expectedCycles: 4,
+			setup:      func(cpu *CPU) { cpu.setFlag(V, true); cpu.PC = baseAddr + 0x06 }, // 6+2=8 -> 8-C = -4
+			expectedPC: baseAddr + 0x06 + 2 - 0x0C, expectedCycles: 4,
 		},
 		{name: "BVS Not Taken", opcode: 0x70, flag: V, flagValue: true, offset: 0x45,
 			setup:      func(cpu *CPU) { cpu.setFlag(V, false) },
@@ -751,19 +784,21 @@ func TestBranchInstructions(t *testing.T) {
 			cpu, bus := setupCPU()
 
 			// Reset P and set the specific flag state needed for the test setup
-			cpu.P = U | I                      // Reset flags
-			cpu.setFlag(tt.flag, tt.flagValue) // Setup initial opposite state if needed by setup func
-			tt.setup(cpu)                      // Apply actual flag state for branch condition
+			// Set PC *before* setup, as setup might modify PC for page cross tests
+			cpu.PC = baseAddr
+			cpu.P = U | I // Reset flags
+			//cpu.setFlag(tt.flag, tt.flagValue) // Setup initial opposite state if needed by setup func
+			tt.setup(cpu) // Apply actual flag state for branch condition
 
 			// Program: Branch instruction ONLY. We rely on runCycles to execute exactly this one.
 			// We pad with BRK just in case something goes wrong and runs too far.
 			program := []uint8{tt.opcode, uint8(tt.offset), 0x00, 0x00, 0x00}
-			bus.load(baseAddr, program)
+			bus.load(cpu.PC, program) // Load at potentially adjusted PC
 			// Ensure reset vector isn't 0x0000 in case BRK is hit accidentally
 			bus.Write(0xFFFC, 0x00)
 			bus.Write(0xFFFD, 0xFF) // Point BRK vector somewhere harmless (e.g., $FF00)
 
-			cpu.PC = baseAddr
+			// cpu.PC is already set
 			cpu.cycles = 0 // Ensure instruction runs immediately
 
 			// Execute *exactly* the number of cycles this instruction should take
@@ -776,7 +811,11 @@ func TestBranchInstructions(t *testing.T) {
 			if cyclesRun != uint64(tt.expectedCycles) {
 				// This check might be sensitive to the exact implementation of Clock() and runCycles().
 				// It's less critical than PC correctness if the timing model is complex.
-				t.Logf("%s warning: Cycle count mismatch. Expected %d cycles, executed %d", tt.name, tt.expectedCycles, cyclesRun)
+				t.Logf("%s warning: Cycle count mismatch. Expected %d cycles, executed %d (This might be due to test harness timing)", tt.name, tt.expectedCycles, cyclesRun)
+			}
+			// Verify U flag is still set
+			if !cpu.getFlag(U) {
+				t.Errorf("%s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
 			}
 		})
 	}
@@ -795,6 +834,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 			0x4C,                   // JMP Absolute opcode
 			uint8(targetAddr),      // Low byte of target address
 			uint8(targetAddr >> 8), // High byte of target address
+			0x00,                   // BRK just in case
 		}
 		bus.load(baseAddr, program)
 		cpu.PC = baseAddr
@@ -818,6 +858,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 			0x6C,                           // JMP Indirect opcode
 			uint8(indirectVectorAddr),      // Low byte of indirect vector address
 			uint8(indirectVectorAddr >> 8), // High byte of indirect vector address
+			0x00,                           // BRK just in case
 		}
 		bus.load(baseAddr, program)
 
@@ -848,6 +889,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 			0x6C,                           // JMP Indirect opcode
 			uint8(indirectVectorAddr),      // Low byte ($FF)
 			uint8(indirectVectorAddr >> 8), // High byte ($10)
+			0x00,                           // BRK just in case
 		}
 		bus.load(baseAddr, program)
 
@@ -879,8 +921,11 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 			0x20,                       // JSR opcode
 			uint8(subroutineAddr),      // Low byte
 			uint8(subroutineAddr >> 8), // High byte
+			0x00,                       // BRK at target just in case
 		}
 		bus.load(baseAddr, program)
+		bus.Write(subroutineAddr, 0x00) // Put BRK at subroutine start for safety
+
 		cpu.PC = baseAddr
 		cpu.cycles = 0
 
@@ -926,8 +971,10 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		bus.Write(stackBase+uint16(cpu.SP+1), uint8(returnAddrOnStack&0x00FF)) // Push low byte ($23)
 
 		// Program: Just RTS
-		program := []uint8{0x60} // RTS opcode
+		program := []uint8{0x60, 0x00} // RTS opcode, BRK just in case
 		bus.load(rtsInstructionAddr, program)
+		bus.Write(expectedFinalPC, 0x00) // Put BRK at destination for safety
+
 		cpu.PC = rtsInstructionAddr
 		cpu.cycles = 0
 
@@ -950,30 +997,31 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 func TestLogicInstructions(t *testing.T) {
 	const baseAddr = 0x0600
 
+	// Get function pointers for comparison once
+	immPtr := getFuncPtr((*CPU).IMM)
+	zp0Ptr := getFuncPtr((*CPU).ZP0)
+	absPtr := getFuncPtr((*CPU).ABS)
+	// ... add others if testing those modes
+
 	// --- AND ---
 	t.Run("AND", func(t *testing.T) {
-		// Get function pointers for comparison once
-		immPtr := getFuncPtr((*CPU).IMM)
-		zp0Ptr := getFuncPtr((*CPU).ZP0)
-		absPtr := getFuncPtr((*CPU).ABS)
-		// Add others ZPX, ABX, etc. pointers here if testing those modes
-
 		tests := []struct {
-			name      string
-			addrMode  func(*CPU) uint8 // Keep the function type
-			opcode    uint8
-			operand   uint8
-			memAddr   uint16
-			initialA  uint8
-			expectedA uint8
-			zero      bool
-			negative  bool
-			cycles    uint
+			name        string
+			addrModePtr uintptr // Use uintptr for comparison
+			opcode      uint8
+			operand     uint8
+			memAddr     uint16
+			initialA    uint8
+			expectedA   uint8
+			zero        bool
+			negative    bool
+			cycles      uint
 		}{
-			{"Immediate", (*CPU).IMM, 0x29, 0x0F, 0, 0xF0, 0x00, true, false, 2},
-			{"Immediate Neg", (*CPU).IMM, 0x29, 0xFF, 0, 0x81, 0x81, false, true, 2},
-			{"ZeroPage", (*CPU).ZP0, 0x25, 0xAA, 0x50, 0xF0, 0xA0, false, true, 3},
-			{"Absolute", (*CPU).ABS, 0x2D, 0x55, 0x1234, 0x3C, 0x14, false, false, 4},
+			{"Immediate", immPtr, 0x29, 0x0F, 0, 0xF0, 0x00, true, false, 2},
+			{"Immediate Neg", immPtr, 0x29, 0xFF, 0, 0x81, 0x81, false, true, 2},
+			{"ZeroPage", zp0Ptr, 0x25, 0xAA, 0x50, 0xF0, 0xA0, false, true, 3},
+			{"Absolute", absPtr, 0x2D, 0x55, 0x1234, 0x3C, 0x14, false, false, 4},
+			// Add more modes if needed (e.g., ZPX, ABX, ABY, IZX, IZY)
 		}
 
 		for _, tt := range tests {
@@ -981,25 +1029,24 @@ func TestLogicInstructions(t *testing.T) {
 				cpu, bus := setupCPU()
 				cpu.A = tt.initialA
 				var program []uint8
-				addrModePtr := getFuncPtr(tt.addrMode) // Get pointer for the current test case
 
-				// ***** USE POINTER COMPARISON *****
-				if addrModePtr == immPtr {
+				// Construct program based on addressing mode pointer
+				if tt.addrModePtr == immPtr {
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if addrModePtr == zp0Ptr {
+				} else if tt.addrModePtr == zp0Ptr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if addrModePtr == absPtr {
+				} else if tt.addrModePtr == absPtr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				} else {
-					t.Errorf("AND %s failed: Unknown address mode", tt.name)
+					t.Fatalf("AND %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
 				cpu.cycles = 0
-				runCycles(cpu, tt.cycles)
+				runCycles(cpu, tt.cycles) // Use runCycles
 
 				// Assertions remain the same
 				if cpu.A != tt.expectedA {
@@ -1011,57 +1058,56 @@ func TestLogicInstructions(t *testing.T) {
 				if cpu.getFlag(N) != tt.negative {
 					t.Errorf("AND %s failed: Expected N=%v, got N=%v", tt.name, tt.negative, cpu.getFlag(N))
 				}
+				if !cpu.getFlag(U) {
+					t.Errorf("AND %s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
+				}
 			})
 		}
 	})
 
 	// --- EOR ---
 	t.Run("EOR", func(t *testing.T) {
-		immPtr := getFuncPtr((*CPU).IMM)
-		zp0Ptr := getFuncPtr((*CPU).ZP0)
-		absPtr := getFuncPtr((*CPU).ABS)
-
 		tests := []struct {
-			name      string
-			addrMode  func(*CPU) uint8
-			opcode    uint8
-			operand   uint8
-			memAddr   uint16
-			initialA  uint8
-			expectedA uint8
-			zero      bool
-			negative  bool
-			cycles    uint
+			name        string
+			addrModePtr uintptr
+			opcode      uint8
+			operand     uint8
+			memAddr     uint16
+			initialA    uint8
+			expectedA   uint8
+			zero        bool
+			negative    bool
+			cycles      uint
 		}{
-			{"Immediate", (*CPU).IMM, 0x49, 0xFF, 0, 0x55, 0xAA, false, true, 2},
-			{"Immediate Zero", (*CPU).IMM, 0x49, 0x33, 0, 0x33, 0x00, true, false, 2},
-			{"ZeroPage", (*CPU).ZP0, 0x45, 0xF0, 0x60, 0x0F, 0xFF, false, true, 3},
-			{"Absolute", (*CPU).ABS, 0x4D, 0x88, 0x4321, 0x88, 0x00, true, false, 4},
+			{"Immediate", immPtr, 0x49, 0xFF, 0, 0x55, 0xAA, false, true, 2},
+			{"Immediate Zero", immPtr, 0x49, 0x33, 0, 0x33, 0x00, true, false, 2},
+			{"ZeroPage", zp0Ptr, 0x45, 0xF0, 0x60, 0x0F, 0xFF, false, true, 3},
+			{"Absolute", absPtr, 0x4D, 0x88, 0x4321, 0x88, 0x00, true, false, 4},
+			// Add more modes if needed
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				cpu, bus := setupCPU()
 				cpu.A = tt.initialA
 				var program []uint8
-				addrModePtr := getFuncPtr(tt.addrMode)
 
-				// ***** USE POINTER COMPARISON *****
-				if addrModePtr == immPtr {
+				// Construct program based on addressing mode pointer
+				if tt.addrModePtr == immPtr {
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if addrModePtr == zp0Ptr {
+				} else if tt.addrModePtr == zp0Ptr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if addrModePtr == absPtr {
+				} else if tt.addrModePtr == absPtr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				} else {
-					t.Errorf("EOR %s failed: Unknown address mode", tt.name)
+					t.Fatalf("EOR %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
 				cpu.cycles = 0
-				runCycles(cpu, tt.cycles)
+				runCycles(cpu, tt.cycles) // Use runCycles
 
 				if cpu.A != tt.expectedA {
 					t.Errorf("EOR %s failed: Expected A=0x%02X, got A=0x%02X", tt.name, tt.expectedA, cpu.A)
@@ -1072,57 +1118,56 @@ func TestLogicInstructions(t *testing.T) {
 				if cpu.getFlag(N) != tt.negative {
 					t.Errorf("EOR %s failed: Expected N=%v, got N=%v", tt.name, tt.negative, cpu.getFlag(N))
 				}
+				if !cpu.getFlag(U) {
+					t.Errorf("EOR %s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
+				}
 			})
 		}
 	})
 
 	// --- ORA ---
 	t.Run("ORA", func(t *testing.T) {
-		immPtr := getFuncPtr((*CPU).IMM)
-		zp0Ptr := getFuncPtr((*CPU).ZP0)
-		absPtr := getFuncPtr((*CPU).ABS)
-
 		tests := []struct {
-			name      string
-			addrMode  func(*CPU) uint8
-			opcode    uint8
-			operand   uint8
-			memAddr   uint16
-			initialA  uint8
-			expectedA uint8
-			zero      bool
-			negative  bool
-			cycles    uint
+			name        string
+			addrModePtr uintptr
+			opcode      uint8
+			operand     uint8
+			memAddr     uint16
+			initialA    uint8
+			expectedA   uint8
+			zero        bool
+			negative    bool
+			cycles      uint
 		}{
-			{"Immediate", (*CPU).IMM, 0x09, 0x0F, 0, 0xF0, 0xFF, false, true, 2},
-			{"Immediate Zero", (*CPU).IMM, 0x09, 0x00, 0, 0x00, 0x00, true, false, 2},
-			{"ZeroPage", (*CPU).ZP0, 0x05, 0xAA, 0x70, 0x55, 0xFF, false, true, 3},
-			{"Absolute", (*CPU).ABS, 0x0D, 0x80, 0xABCD, 0x01, 0x81, false, true, 4},
+			{"Immediate", immPtr, 0x09, 0x0F, 0, 0xF0, 0xFF, false, true, 2},
+			{"Immediate Zero", immPtr, 0x09, 0x00, 0, 0x00, 0x00, true, false, 2},
+			{"ZeroPage", zp0Ptr, 0x05, 0xAA, 0x70, 0x55, 0xFF, false, true, 3},
+			{"Absolute", absPtr, 0x0D, 0x80, 0xABCD, 0x01, 0x81, false, true, 4},
+			// Add more modes if needed
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				cpu, bus := setupCPU()
 				cpu.A = tt.initialA
 				var program []uint8
-				addrModePtr := getFuncPtr(tt.addrMode)
 
-				// ***** USE POINTER COMPARISON *****
-				if addrModePtr == immPtr {
+				// Construct program based on addressing mode pointer
+				if tt.addrModePtr == immPtr {
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if addrModePtr == zp0Ptr {
+				} else if tt.addrModePtr == zp0Ptr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if addrModePtr == absPtr {
+				} else if tt.addrModePtr == absPtr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				} else {
-					t.Errorf("ORA %s failed: Unknown address mode", tt.name)
+					t.Fatalf("ORA %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
 				cpu.cycles = 0
-				runCycles(cpu, tt.cycles)
+				runCycles(cpu, tt.cycles) // Use runCycles
 
 				if cpu.A != tt.expectedA {
 					t.Errorf("ORA %s failed: Expected A=0x%02X, got A=0x%02X", tt.name, tt.expectedA, cpu.A)
@@ -1133,63 +1178,62 @@ func TestLogicInstructions(t *testing.T) {
 				if cpu.getFlag(N) != tt.negative {
 					t.Errorf("ORA %s failed: Expected N=%v, got N=%v", tt.name, tt.negative, cpu.getFlag(N))
 				}
+				if !cpu.getFlag(U) {
+					t.Errorf("ORA %s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
+				}
 			})
 		}
 	})
 
 	// --- BIT ---
 	t.Run("BIT", func(t *testing.T) {
-		zp0Ptr := getFuncPtr((*CPU).ZP0)
-		absPtr := getFuncPtr((*CPU).ABS)
-
 		tests := []struct {
-			name     string
-			addrMode func(*CPU) uint8
-			opcode   uint8
-			operand  uint8
-			memAddr  uint16
-			initialA uint8
-			zero     bool
-			negative bool
-			overflow bool
-			cycles   uint
+			name        string
+			addrModePtr uintptr
+			opcode      uint8
+			operand     uint8 // Value in memory
+			memAddr     uint16
+			initialA    uint8
+			zero        bool // Result of A & M == 0
+			negative    bool // M bit 7
+			overflow    bool // M bit 6
+			cycles      uint
 		}{
-			{"ZeroPage Z=1", (*CPU).ZP0, 0x24, 0xAA, 0x80, 0x55, true, true, false, 3},
-			{"ZeroPage Z=0", (*CPU).ZP0, 0x24, 0x55, 0x80, 0x77, false, false, true, 3},
-			{"Absolute V=1", (*CPU).ABS, 0x2C, 0xC0, 0xBEEF, 0xFF, false, true, true, 4},
-			{"Absolute N=0", (*CPU).ABS, 0x2C, 0x3F, 0xBEEF, 0xFF, false, false, false, 4},
+			{"ZeroPage Z=1, N=1, V=0", zp0Ptr, 0x24, 0xAA, 0x80, 0x55, true, true, false, 3},     // 55 & AA = 00 (Z=1), AA bit 7=1 (N=1), AA bit 6=0 (V=0)
+			{"ZeroPage Z=0, N=0, V=1", zp0Ptr, 0x24, 0x55, 0x80, 0x77, false, false, true, 3},    // 77 & 55 = 55 (Z=0), 55 bit 7=0 (N=0), 55 bit 6=1 (V=1)
+			{"Absolute Z=0, N=1, V=1", absPtr, 0x2C, 0xC0, 0xBEEF, 0xFF, false, true, true, 4},   // FF & C0 = C0 (Z=0), C0 bit 7=1 (N=1), C0 bit 6=1 (V=1)
+			{"Absolute Z=0, N=0, V=0", absPtr, 0x2C, 0x3F, 0xBEEF, 0xFF, false, false, false, 4}, // FF & 3F = 3F (Z=0), 3F bit 7=0 (N=0), 3F bit 6=0 (V=0)
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				cpu, bus := setupCPU()
 				cpu.A = tt.initialA
-				initialA := cpu.A
+				initialA := cpu.A // BIT doesn't modify A
 				var program []uint8
-				addrModePtr := getFuncPtr(tt.addrMode)
 
-				// ***** USE POINTER COMPARISON *****
-				if addrModePtr == zp0Ptr {
+				// Construct program based on addressing mode pointer
+				if tt.addrModePtr == zp0Ptr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if addrModePtr == absPtr {
+				} else if tt.addrModePtr == absPtr {
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				} else {
-					t.Fatalf("BIT %s: Unhandled addressing mode pointer in test setup", tt.name)
+					t.Fatalf("BIT %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
 				cpu.cycles = 0
-				runCycles(cpu, tt.cycles)
+				runCycles(cpu, tt.cycles) // Use runCycles
 
-				// Assertions remain the same
+				// Assertions
 				if cpu.A != initialA {
 					t.Errorf("BIT %s failed: Accumulator was modified! Expected A=0x%02X, got A=0x%02X", tt.name, initialA, cpu.A)
 				}
 				if cpu.getFlag(Z) != tt.zero {
-					t.Errorf("BIT %s failed: Expected Z=%v, got Z=%v", tt.name, tt.zero, cpu.getFlag(Z))
+					t.Errorf("BIT %s failed: Expected Z=%v (from A & M), got Z=%v", tt.name, tt.zero, cpu.getFlag(Z))
 				}
 				if cpu.getFlag(N) != tt.negative {
 					t.Errorf("BIT %s failed: Expected N=%v (from operand bit 7), got N=%v", tt.name, tt.negative, cpu.getFlag(N))
@@ -1197,9 +1241,177 @@ func TestLogicInstructions(t *testing.T) {
 				if cpu.getFlag(V) != tt.overflow {
 					t.Errorf("BIT %s failed: Expected V=%v (from operand bit 6), got V=%v", tt.name, tt.overflow, cpu.getFlag(V))
 				}
+				if !cpu.getFlag(U) {
+					t.Errorf("BIT %s failed: U flag became unset (P=0x%02X)", tt.name, cpu.P)
+				}
 			})
 		}
 	})
+}
+
+// --- Shift and Rotate Tests ---
+func TestShiftRotateInstructions(t *testing.T) {
+	const baseAddr = 0x0800 // New base address for clarity
+
+	// Get function pointers for comparison once
+	impPtr := getFuncPtr((*CPU).IMP)
+	zp0Ptr := getFuncPtr((*CPU).ZP0)
+	zpxPtr := getFuncPtr((*CPU).ZPX)
+	absPtr := getFuncPtr((*CPU).ABS)
+	abxPtr := getFuncPtr((*CPU).ABX)
+
+	type ShiftRotateTest struct {
+		name             string
+		instrName        string // "ASL", "LSR", "ROL", "ROR"
+		addrModePtr      uintptr
+		opcode           uint8
+		initialValue     uint8
+		memAddr          uint16 // Used for non-implied modes
+		initialCarry     bool
+		setupX           uint8 // For ZPX, ABX
+		expectedValue    uint8
+		expectedCarry    bool
+		expectedZero     bool
+		expectedNegative bool
+		cycles           uint
+	}
+
+	tests := []ShiftRotateTest{
+		// --- ASL ---
+		{instrName: "ASL", name: "Accumulator Basic", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x42, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ASL", name: "Accumulator Set Carry", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x81, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ASL", name: "Accumulator To Zero", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x80, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ASL", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0x06, initialValue: 0x11, memAddr: 0x30, expectedValue: 0x22, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "ASL", name: "ZeroPage Set Carry", addrModePtr: zp0Ptr, opcode: 0x06, initialValue: 0xFF, memAddr: 0x31, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "ASL", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0x16, initialValue: 0x03, memAddr: 0x40, setupX: 0x05, expectedValue: 0x06, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 40+5=45
+		{instrName: "ASL", name: "Absolute", addrModePtr: absPtr, opcode: 0x0E, initialValue: 0x80, memAddr: 0x1234, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "ASL", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0x1E, initialValue: 0x0F, memAddr: 0x2000, setupX: 0x10, expectedValue: 0x1E, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 2010
+
+		// --- LSR ---
+		{instrName: "LSR", name: "Accumulator Basic", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x84, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "Accumulator Set Carry", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x01, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "Accumulator Zero", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x00, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0x46, initialValue: 0x22, memAddr: 0x32, expectedValue: 0x11, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "LSR", name: "ZeroPage Set Carry", addrModePtr: zp0Ptr, opcode: 0x46, initialValue: 0xFF, memAddr: 0x33, expectedValue: 0x7F, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "LSR", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0x56, initialValue: 0x06, memAddr: 0x50, setupX: 0x02, expectedValue: 0x03, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 50+2=52
+		{instrName: "LSR", name: "Absolute", addrModePtr: absPtr, opcode: 0x4E, initialValue: 0x01, memAddr: 0x4321, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "LSR", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0x5E, initialValue: 0x1E, memAddr: 0x3000, setupX: 0x20, expectedValue: 0x0F, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 3020
+
+		// --- ROL ---
+		{instrName: "ROL", name: "Accumulator Basic C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x42, initialCarry: false, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Basic C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x42, initialCarry: true, expectedValue: 0x85, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Set Carry C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x81, initialCarry: false, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Set Carry C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x81, initialCarry: true, expectedValue: 0x03, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator To Zero C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x80, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator To One C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x80, initialCarry: true, expectedValue: 0x01, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "ZeroPage C=1", addrModePtr: zp0Ptr, opcode: 0x26, initialValue: 0x11, memAddr: 0x34, initialCarry: true, expectedValue: 0x23, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "ROL", name: "ZeroPage,X C=0", addrModePtr: zpxPtr, opcode: 0x36, initialValue: 0xFF, memAddr: 0x60, setupX: 0x01, initialCarry: false, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = 61
+		{instrName: "ROL", name: "Absolute C=1", addrModePtr: absPtr, opcode: 0x2E, initialValue: 0x7F, memAddr: 0x5678, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "ROL", name: "Absolute,X C=0", addrModePtr: abxPtr, opcode: 0x3E, initialValue: 0x00, memAddr: 0x4000, setupX: 0x30, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 7}, // Addr = 4030
+
+		// --- ROR ---
+		{instrName: "ROR", name: "Accumulator Basic C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x84, initialCarry: false, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Basic C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x84, initialCarry: true, expectedValue: 0xC2, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Set Carry C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x01, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Set Carry C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x01, initialCarry: true, expectedValue: 0x80, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Zero C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x00, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Neg C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x00, initialCarry: true, expectedValue: 0x80, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "ZeroPage C=1", addrModePtr: zp0Ptr, opcode: 0x66, initialValue: 0x22, memAddr: 0x35, initialCarry: true, expectedValue: 0x91, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "ROR", name: "ZeroPage,X C=0", addrModePtr: zpxPtr, opcode: 0x76, initialValue: 0x01, memAddr: 0x70, setupX: 0x03, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6}, // Addr = 73
+		{instrName: "ROR", name: "Absolute C=1", addrModePtr: absPtr, opcode: 0x6E, initialValue: 0xFE, memAddr: 0x8765, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "ROR", name: "Absolute,X C=0", addrModePtr: abxPtr, opcode: 0x7E, initialValue: 0xAA, memAddr: 0x5000, setupX: 0x40, initialCarry: false, expectedValue: 0x55, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 5040
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s %s", tt.instrName, tt.name), func(t *testing.T) {
+			cpu, bus := setupCPU()
+
+			// --- Setup ---
+			cpu.setFlag(C, tt.initialCarry)
+			cpu.P |= U // Ensure U is set initially
+
+			var program []uint8
+			var effectiveAddr uint16
+
+			if tt.addrModePtr == impPtr {
+				cpu.A = tt.initialValue
+				program = []uint8{tt.opcode, 0x00} // Add BRK for safety
+				effectiveAddr = 0                  // Not used
+			} else {
+				// Memory addressing modes
+				addrArgLow := uint8(tt.memAddr & 0x00FF)
+				addrArgHigh := uint8(tt.memAddr >> 8)
+
+				if tt.addrModePtr == zp0Ptr {
+					program = []uint8{tt.opcode, addrArgLow, 0x00}
+					effectiveAddr = uint16(addrArgLow)
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == zpxPtr {
+					cpu.X = tt.setupX
+					program = []uint8{tt.opcode, addrArgLow, 0x00}
+					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == absPtr {
+					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+					effectiveAddr = tt.memAddr
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == abxPtr {
+					cpu.X = tt.setupX
+					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+					// Note: ABX cycle count depends on page cross, but the test provides the expected total.
+					// We don't need to calculate the exact effective address here for setup, just for verification.
+					// The CPU calculates the final address during execution.
+					// For verification, calculate the expected final address.
+					effectiveAddr = tt.memAddr + uint16(cpu.X)
+					bus.Write(effectiveAddr, tt.initialValue) // Write to the *final* location for the test value
+				} else {
+					t.Fatalf("%s %s: Unhandled addressing mode pointer in test setup: %v", tt.instrName, tt.name, tt.addrModePtr)
+				}
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.cycles = 0
+
+			// --- Execution ---
+			runCycles(cpu, tt.cycles)
+
+			// --- Verification ---
+			var finalValue uint8
+			if tt.addrModePtr == impPtr {
+				finalValue = cpu.A
+			} else {
+				// Re-calculate effective address for indexed modes if necessary, as CPU state might have changed
+				// (though it shouldn't for these instructions).
+				// For ZPX, the calculation is done inside the CPU's addressing mode.
+				// For ABX, same. The effectiveAddr calculated above is where the result should be.
+				finalValue = bus.Read(effectiveAddr)
+			}
+
+			// Check Result Value
+			if finalValue != tt.expectedValue {
+				if tt.addrModePtr == impPtr {
+					t.Errorf("%s %s failed: Expected A=0x%02X, got A=0x%02X", tt.instrName, tt.name, tt.expectedValue, finalValue)
+				} else {
+					t.Errorf("%s %s failed: Expected Mem[0x%04X]=0x%02X, got 0x%02X", tt.instrName, tt.name, effectiveAddr, tt.expectedValue, finalValue)
+				}
+			}
+
+			// Check Flags
+			if cpu.getFlag(C) != tt.expectedCarry {
+				t.Errorf("%s %s failed: Expected C=%v, got C=%v", tt.instrName, tt.name, tt.expectedCarry, cpu.getFlag(C))
+			}
+			if cpu.getFlag(Z) != tt.expectedZero {
+				t.Errorf("%s %s failed: Expected Z=%v, got Z=%v", tt.instrName, tt.name, tt.expectedZero, cpu.getFlag(Z))
+			}
+			if cpu.getFlag(N) != tt.expectedNegative {
+				t.Errorf("%s %s failed: Expected N=%v, got N=%v", tt.instrName, tt.name, tt.expectedNegative, cpu.getFlag(N))
+			}
+			if !cpu.getFlag(U) {
+				t.Errorf("%s %s failed: U flag became unset (P=0x%02X)", tt.instrName, tt.name, cpu.P)
+			}
+		})
+	}
 }
 
 // --- Interrupt and Miscellaneous Tests (Keep as before) ---
@@ -1220,7 +1432,7 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		cpu.PC = baseAddr
 		originalFlags := C | Z | U // Start with I=0, B=0, D=0, V=0, N=0
 		cpu.P = originalFlags
-		program := []uint8{0x00}
+		program := []uint8{0x00} // BRK Opcode
 		bus.load(baseAddr, program)
 		cpu.cycles = 0
 
@@ -1236,54 +1448,80 @@ func TestInterruptMiscInstructions(t *testing.T) {
 			t.Errorf("BRK failed: PC load failed. Expected PC=0x%04X, got PC=0x%04X", expectedIrqBrkVector, cpu.PC)
 		}
 
-		// (Rest of BRK assertions remain the same)
+		// 2. Check SP decremented by 3
 		expectedSP := initialSP - 3
 		if cpu.SP != expectedSP {
 			t.Errorf("BRK failed: SP incorrect. Expected SP=0x%02X, got SP=0x%02X", expectedSP, cpu.SP)
 		}
+
+		// 3. Check stack contents
+		// PC pushed should be address *after* the BRK instruction + 1 byte padding (PC+2)
 		pushedPC := baseAddr + 2
-		pushedStatus := bus.Read(stackBase + uint16(expectedSP+1))
+		pushedStatus := bus.Read(stackBase + uint16(expectedSP+1)) // Stack grows down, so +1 is status
 		pushedPCLow := bus.Read(stackBase + uint16(expectedSP+2))
 		pushedPCHigh := bus.Read(stackBase + uint16(expectedSP+3))
+
+		// Status pushed should have B and U flags set.
 		expectedPushedStatus := originalFlags | B | U
 		if Flags(pushedStatus) != expectedPushedStatus {
 			t.Errorf("BRK failed: Pushed Status incorrect. Expected P=0x%02X (%s), got P=0x%02X (%s)", expectedPushedStatus, fmt.Sprintf("%08b", expectedPushedStatus), pushedStatus, fmt.Sprintf("%08b", pushedStatus))
 		}
+		// Check PC bytes
 		if pushedPCLow != uint8(pushedPC&0x00FF) {
 			t.Errorf("BRK failed: Pushed PC Low incorrect. Expected 0x%02X, got 0x%02X", uint8(pushedPC&0x00FF), pushedPCLow)
 		}
 		if pushedPCHigh != uint8(pushedPC>>8) {
 			t.Errorf("BRK failed: Pushed PC High incorrect. Expected 0x%02X, got 0x%02X", uint8(pushedPC>>8), pushedPCHigh)
 		}
+
+		// 4. Check CPU state after BRK
+		// Interrupt Disable flag should be set in the CPU's P register
 		if !cpu.getFlag(I) {
 			t.Errorf("BRK failed: Interrupt Disable flag (I) was not set in P register.")
 		}
+		// B flag in the CPU's P register should remain clear (it's only set for the push)
 		if cpu.getFlag(B) {
 			t.Errorf("BRK failed: Break flag (B) was incorrectly set in P register.")
 		}
+		// U flag should remain set
+		if !cpu.getFlag(U) {
+			t.Errorf("BRK failed: U flag became unset in P register.")
+		}
 	})
 
-	// --- RTI (Passed before, likely okay - Keep setup inside) ---
+	// --- RTI ---
 	t.Run("RTI", func(t *testing.T) {
 		cpu, bus := setupCPU() // Fresh setup
 		targetPC := uint16(0xC0DE)
-		targetStatus := C | D | V | U
-		cpu.SP = initialSP - 3
-		bus.Write(stackBase+uint16(cpu.SP+1), uint8(targetStatus))
+		// Status to pull: C=1, D=1, V=1. N,Z,I = 0. B is ignored. U should end up set.
+		targetStatusOnStack := C | D | V | B | U              // Include B and U as they might be on stack
+		expectedFinalStatus := (targetStatusOnStack & ^B) | U // Final status ignores B, forces U
+
+		cpu.SP = initialSP - 3 // Make space for P, PC_low, PC_high
+		bus.Write(stackBase+uint16(cpu.SP+1), uint8(targetStatusOnStack))
 		bus.Write(stackBase+uint16(cpu.SP+2), uint8(targetPC&0x00FF))
 		bus.Write(stackBase+uint16(cpu.SP+3), uint8(targetPC>>8))
-		cpu.PC = 0x1000
-		cpu.P = N | Z | I | U
+
+		// Start CPU with different state
+		cpu.PC = 0x1000       // Irrelevant start PC for RTI itself
+		cpu.P = N | Z | I | U // Start with different flags
+
 		rtiAddr := uint16(0x2000)
-		bus.load(rtiAddr, []uint8{0x40})
+		bus.load(rtiAddr, []uint8{0x40, 0x00}) // RTI, BRK
+		bus.Write(targetPC, 0x00)              // BRK at destination for safety
+
 		cpu.PC = rtiAddr
 		cpu.cycles = 0
 		runCycles(cpu, 6)
+
+		// Verification
 		if cpu.PC != targetPC {
 			t.Errorf("RTI failed: PC incorrect. Expected PC=0x%04X, got PC=0x%04X", targetPC, cpu.PC)
 		}
-		if cpu.P != targetStatus {
-			t.Errorf("RTI failed: P register incorrect. Expected P=0x%02X (%s), got P=0x%02X (%s)", targetStatus, fmt.Sprintf("%08b", targetStatus), cpu.P, fmt.Sprintf("%08b", cpu.P))
+		if cpu.P != expectedFinalStatus {
+			t.Errorf("RTI failed: P register incorrect. Expected P=0x%02X (%s), got P=0x%02X (%s)",
+				expectedFinalStatus, fmt.Sprintf("%08b", expectedFinalStatus),
+				cpu.P, fmt.Sprintf("%08b", cpu.P))
 		}
 		if cpu.SP != initialSP {
 			t.Errorf("RTI failed: SP incorrect. Expected SP=0x%02X, got SP=0x%02X", initialSP, cpu.SP)
@@ -1295,10 +1533,13 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		cpu, _ := setupCPU() // Fresh setup
 		baseAddr := uint16(0x0700)
 		cpu.PC = baseAddr
-		cpu.P = C | Z | I | U
+		cpu.P = C | Z | I | U // I flag IS SET
 		initialP := cpu.P
 		initialSP := cpu.SP
-		cpu.InterruptRequest()
+
+		cpu.InterruptRequest() // Attempt IRQ
+
+		// Verify state hasn't changed
 		if cpu.PC != baseAddr {
 			t.Errorf("IRQ (I=1) failed: PC changed. Expected 0x%04X, got 0x%04X", baseAddr, cpu.PC)
 		}
@@ -1333,27 +1574,43 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		if cpu.PC != expectedIrqBrkVector {
 			t.Errorf("IRQ (I=0) failed: Expected PC=0x%04X, got PC=0x%04X", expectedIrqBrkVector, cpu.PC)
 		}
-		// (Rest of IRQ Occurs assertions remain the same)
+
+		// 2. Check SP decremented by 3
 		expectedSP := initialSP - 3
 		if cpu.SP != expectedSP {
 			t.Errorf("IRQ (I=0) failed: Expected SP=0x%02X, got SP=0x%02X", expectedSP, cpu.SP)
 		}
+
+		// 3. Check stack contents
 		pushedStatus := bus.Read(stackBase + uint16(expectedSP+1))
 		pushedPCLow := bus.Read(stackBase + uint16(expectedSP+2))
 		pushedPCHigh := bus.Read(stackBase + uint16(expectedSP+3))
-		expectedPushedStatus := (originalP | U) & ^B &^ I
+
+		// Status pushed should have B CLEAR and U SET. I flag in pushed value should be original (0).
+		expectedPushedStatus := (originalP | U) & ^B // B is clear, U is set, I remains original (0)
 		if Flags(pushedStatus) != expectedPushedStatus {
 			t.Errorf("IRQ (I=0) failed: Pushed Status incorrect. Expected P=0x%02X (%s), got P=0x%02X (%s)", expectedPushedStatus, fmt.Sprintf("%08b", expectedPushedStatus), pushedStatus, fmt.Sprintf("%08b", pushedStatus))
 		}
+		// PC pushed is the address where the interrupt occurred
 		if pushedPCLow != uint8(baseAddr&0x00FF) {
 			t.Errorf("IRQ (I=0) failed: Pushed PC Low incorrect. Expected 0x%02X, got 0x%02X", uint8(baseAddr&0x00FF), pushedPCLow)
 		}
 		if pushedPCHigh != uint8(baseAddr>>8) {
 			t.Errorf("IRQ (I=0) failed: Pushed PC High incorrect. Expected 0x%02X, got 0x%02X", uint8(baseAddr>>8), pushedPCHigh)
 		}
-		if !cpu.getFlag(I) {
+
+		// 4. Check CPU state after IRQ
+		if !cpu.getFlag(I) { // I flag must be set now
 			t.Errorf("IRQ (I=0) failed: Interrupt Disable flag (I) was not set in P register after IRQ.")
 		}
+		if !cpu.getFlag(U) { // U flag must be set
+			t.Errorf("IRQ (I=0) failed: U flag became unset after IRQ.")
+		}
+		if cpu.getFlag(B) { // B flag must be clear
+			t.Errorf("IRQ (I=0) failed: B flag became set after IRQ.")
+		}
+
+		// 5. Check cycle count
 		if cpu.cycles != 7 {
 			t.Errorf("IRQ (I=0) failed: Expected cpu.cycles=7, got %d", cpu.cycles)
 		}
@@ -1366,12 +1623,11 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		baseAddr := uint16(0x0700)
 
 		cpu.PC = baseAddr
+		cpu.P = N | V | U // Base flags
 		if iFlag {
-			cpu.P = N | V | I | U
-		} else {
-			cpu.P = N | V | U
+			cpu.P |= I // Set I flag if testing NMI with I=1
 		}
-		originalP := cpu.P
+		originalP := cpu.P // Capture the starting flags (including I state)
 
 		// Sanity check: Verify vectors immediately after setup, before interrupt call
 		if bus.Read(0xFFFA) != 0x00 || bus.Read(0xFFFB) != 0xF0 {
@@ -1384,34 +1640,206 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		if cpu.PC != expectedNmiVector {
 			t.Errorf("NMI (I=%v) failed: Expected PC=0x%04X, got PC=0x%04X", iFlag, expectedNmiVector, cpu.PC)
 		}
-		// (Rest of NMI assertions remain the same)
+
+		// 2. Check SP decremented by 3
 		expectedSP := initialSP - 3
 		if cpu.SP != expectedSP {
 			t.Errorf("NMI (I=%v) failed: Expected SP=0x%02X, got SP=0x%02X", iFlag, expectedSP, cpu.SP)
 		}
+
+		// 3. Check stack contents
 		pushedStatus := bus.Read(stackBase + uint16(expectedSP+1))
 		pushedPCLow := bus.Read(stackBase + uint16(expectedSP+2))
 		pushedPCHigh := bus.Read(stackBase + uint16(expectedSP+3))
-		expectedPushedStatus := (originalP | U) & ^B
+
+		// Status pushed should have B CLEAR and U SET. I flag in pushed value should be original.
+		expectedPushedStatus := (originalP | U) & ^B // B is clear, U is set, I remains original
 		if Flags(pushedStatus) != expectedPushedStatus {
 			t.Errorf("NMI (I=%v) failed: Pushed Status incorrect. Expected P=0x%02X (%s), got P=0x%02X (%s)", iFlag, expectedPushedStatus, fmt.Sprintf("%08b", expectedPushedStatus), pushedStatus, fmt.Sprintf("%08b", pushedStatus))
 		}
+		// PC pushed is the address where the interrupt occurred
 		if pushedPCLow != uint8(baseAddr&0x00FF) {
 			t.Errorf("NMI (I=%v) failed: Pushed PC Low incorrect. Expected 0x%02X, got 0x%02X", iFlag, uint8(baseAddr&0x00FF), pushedPCLow)
 		}
 		if pushedPCHigh != uint8(baseAddr>>8) {
 			t.Errorf("NMI (I=%v) failed: Pushed PC High incorrect. Expected 0x%02X, got 0x%02X", iFlag, uint8(baseAddr>>8), pushedPCHigh)
 		}
-		if !cpu.getFlag(I) {
+
+		// 4. Check CPU state after NMI
+		if !cpu.getFlag(I) { // I flag must be set now, regardless of initial state
 			t.Errorf("NMI (I=%v) failed: Interrupt Disable flag (I) was not set in P register after NMI.", iFlag)
 		}
+		if !cpu.getFlag(U) { // U flag must be set
+			t.Errorf("NMI (I=%v) failed: U flag became unset after NMI.", iFlag)
+		}
+		if cpu.getFlag(B) { // B flag must be clear
+			t.Errorf("NMI (I=%v) failed: B flag became set after NMI.", iFlag)
+		}
+
+		// 5. Check cycle count
 		if cpu.cycles != 8 {
 			t.Errorf("NMI (I=%v) failed: Expected cpu.cycles=8, got %d", iFlag, cpu.cycles)
 		}
 	}
 
 	t.Run("NMI I=0", func(t *testing.T) { runNMITest(t, false) })
-	t.Run("NMI I=1", func(t *testing.T) { runNMITest(t, true) })
+	t.Run("NMI I=1", func(t *testing.T) { runNMITest(t, true) }) // NMI occurs even if I=1
+}
+
+// TestIncrementDecrement tests INC, INX, INY, DEC, DEX, DEY
+func TestIncrementDecrement(t *testing.T) {
+	const baseAddr = 0x0900 // New base address
+
+	// Get function pointers for comparison once
+	impPtr := getFuncPtr((*CPU).IMP)
+	zp0Ptr := getFuncPtr((*CPU).ZP0)
+	zpxPtr := getFuncPtr((*CPU).ZPX)
+	absPtr := getFuncPtr((*CPU).ABS)
+	abxPtr := getFuncPtr((*CPU).ABX)
+
+	type IncDecTest struct {
+		name             string
+		instrName        string // "INC", "DEC", "INX", "DEX", "INY", "DEY"
+		addrModePtr      uintptr
+		opcode           uint8
+		initialValue     uint8
+		reg              *uint8 // Pointer to X or Y for INX/DEX/INY/DEY, nil for INC/DEC
+		memAddr          uint16 // Used for INC/DEC memory modes
+		setupX           uint8  // For ZPX, ABX
+		expectedValue    uint8
+		expectedZero     bool
+		expectedNegative bool
+		cycles           uint
+	}
+
+	tests := []IncDecTest{
+		// --- INX ---
+		{instrName: "INX", name: "Basic", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0x10, reg: nil, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 2}, // reg will be set later
+		{instrName: "INX", name: "Wrap Zero", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "INX", name: "To Negative", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
+
+		// --- INY ---
+		{instrName: "INY", name: "Basic", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0x20, reg: nil, expectedValue: 0x21, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "INY", name: "Wrap Zero", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "INY", name: "To Negative", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
+
+		// --- DEX ---
+		{instrName: "DEX", name: "Basic", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x11, reg: nil, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEX", name: "Wrap Neg", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "DEX", name: "From Negative", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
+
+		// --- DEY ---
+		{instrName: "DEY", name: "Basic", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x21, reg: nil, expectedValue: 0x20, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEY", name: "Wrap Neg", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "DEY", name: "From Negative", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
+
+		// --- INC (Memory) ---
+		{instrName: "INC", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0xE6, initialValue: 0x10, memAddr: 0x90, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "INC", name: "ZeroPage Wrap", addrModePtr: zp0Ptr, opcode: 0xE6, initialValue: 0xFF, memAddr: 0x91, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 5},
+		{instrName: "INC", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0xF6, initialValue: 0x7F, memAddr: 0xA0, setupX: 0x05, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = A5
+		{instrName: "INC", name: "Absolute", addrModePtr: absPtr, opcode: 0xEE, initialValue: 0xAA, memAddr: 0xAAAA, expectedValue: 0xAB, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "INC", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0xFE, initialValue: 0xFE, memAddr: 0xBB00, setupX: 0xCC, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = BBCC
+
+		// --- DEC (Memory) ---
+		{instrName: "DEC", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0xC6, initialValue: 0x11, memAddr: 0x92, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "DEC", name: "ZeroPage Wrap", addrModePtr: zp0Ptr, opcode: 0xC6, initialValue: 0x00, memAddr: 0x93, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "DEC", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0xD6, initialValue: 0x80, memAddr: 0xB0, setupX: 0x06, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = B6
+		{instrName: "DEC", name: "Absolute", addrModePtr: absPtr, opcode: 0xCE, initialValue: 0x01, memAddr: 0xCCCC, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "DEC", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0xDE, initialValue: 0xAB, memAddr: 0xDD00, setupX: 0xDD, expectedValue: 0xAA, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = DD DD
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s %s", tt.instrName, tt.name), func(t *testing.T) {
+			cpu, bus := setupCPU()
+
+			// --- Setup ---
+			cpu.P |= U // Ensure U is set initially
+
+			var program []uint8
+			var effectiveAddr uint16
+			var targetReg *uint8 // Pointer to X or Y for verification
+
+			// Determine target register for IMP mode
+			if tt.instrName == "INX" || tt.instrName == "DEX" {
+				targetReg = &cpu.X
+			} else if tt.instrName == "INY" || tt.instrName == "DEY" {
+				targetReg = &cpu.Y
+			}
+
+			if tt.addrModePtr == impPtr {
+				if targetReg == nil {
+					t.Fatalf("%s %s: IMP mode specified but no target register (X/Y)", tt.instrName, tt.name)
+				}
+				*targetReg = tt.initialValue       // Set X or Y directly
+				program = []uint8{tt.opcode, 0x00} // Add BRK for safety
+				effectiveAddr = 0                  // Not used
+			} else {
+				// Memory addressing modes (for INC/DEC)
+				addrArgLow := uint8(tt.memAddr & 0x00FF)
+				addrArgHigh := uint8(tt.memAddr >> 8)
+
+				if tt.addrModePtr == zp0Ptr {
+					program = []uint8{tt.opcode, addrArgLow, 0x00}
+					effectiveAddr = uint16(addrArgLow)
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == zpxPtr {
+					cpu.X = tt.setupX
+					program = []uint8{tt.opcode, addrArgLow, 0x00}
+					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == absPtr {
+					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+					effectiveAddr = tt.memAddr
+					bus.Write(effectiveAddr, tt.initialValue)
+				} else if tt.addrModePtr == abxPtr {
+					cpu.X = tt.setupX
+					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
+					// Similar to shifts, effective address calculated by CPU, verify final location
+					effectiveAddr = tt.memAddr + uint16(cpu.X)
+					bus.Write(effectiveAddr, tt.initialValue) // Write initial value to final address
+				} else {
+					t.Fatalf("%s %s: Unhandled addressing mode pointer in test setup: %v", tt.instrName, tt.name, tt.addrModePtr)
+				}
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.cycles = 0
+
+			// --- Execution ---
+			runCycles(cpu, tt.cycles)
+
+			// --- Verification ---
+			var finalValue uint8
+			if tt.addrModePtr == impPtr {
+				finalValue = *targetReg // Read from X or Y
+			} else {
+				// INC/DEC modify memory
+				finalValue = bus.Read(effectiveAddr)
+			}
+
+			// Check Result Value
+			if finalValue != tt.expectedValue {
+				if tt.addrModePtr == impPtr {
+					t.Errorf("%s %s failed: Expected Reg=0x%02X, got Reg=0x%02X", tt.instrName, tt.name, tt.expectedValue, finalValue)
+				} else {
+					t.Errorf("%s %s failed: Expected Mem[0x%04X]=0x%02X, got 0x%02X", tt.instrName, tt.name, effectiveAddr, tt.expectedValue, finalValue)
+				}
+			}
+
+			// Check Flags
+			if cpu.getFlag(Z) != tt.expectedZero {
+				t.Errorf("%s %s failed: Expected Z=%v, got Z=%v", tt.instrName, tt.name, tt.expectedZero, cpu.getFlag(Z))
+			}
+			if cpu.getFlag(N) != tt.expectedNegative {
+				t.Errorf("%s %s failed: Expected N=%v, got N=%v", tt.instrName, tt.name, tt.expectedNegative, cpu.getFlag(N))
+			}
+			// Carry flag is NOT affected by INC/DEC/INX/DEX/INY/DEY
+			if !cpu.getFlag(U) {
+				t.Errorf("%s %s failed: U flag became unset (P=0x%02X)", tt.instrName, tt.name, cpu.P)
+			}
+		})
+	}
 }
 
 // --- Placeholder Tests for Complex Instructions ---
@@ -1421,14 +1849,6 @@ func TestArithmeticPlaceholders(t *testing.T) {
 	t.Skip("Skipping arithmetic tests (ADC/SBC) - Implement instructions first.")
 	// TODO: Write tests for ADC (various modes, flags C/V/Z/N, decimal mode?)
 	// TODO: Write tests for SBC (various modes, flags C/V/Z/N, decimal mode?)
-}
-
-func TestShiftRotatePlaceholders(t *testing.T) {
-	t.Skip("Skipping shift/rotate tests (ASL/LSR/ROL/ROR) - Implement instructions first.")
-	// TODO: Write tests for ASL (Acc & Mem, Flags C/Z/N)
-	// TODO: Write tests for LSR (Acc & Mem, Flags C/Z/N)
-	// TODO: Write tests for ROL (Acc & Mem, Flags C/Z/N)
-	// TODO: Write tests for ROR (Acc & Mem, Flags C/Z/N)
 }
 
 func TestComparePlaceholders(t *testing.T) {
