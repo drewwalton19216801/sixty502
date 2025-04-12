@@ -40,7 +40,7 @@ type CPU struct {
 	bus Bus
 
 	// Internal state for instruction execution
-	cycles             uint8        // Cycles remaining for the current instruction
+	Cycles             uint8        // Cycles remaining for the current instruction
 	opcode             uint8        // Current opcode being executed
 	fetchedData        uint8        // Data fetched by addressing mode
 	addrAbs            uint16       // Absolute address calculated by addressing mode
@@ -1078,7 +1078,7 @@ func (c *CPU) Reset() {
 	c.addrAbs = 0x0000
 	c.addrRel = 0x0000
 	c.fetchedData = 0x00
-	c.cycles = 8
+	c.Cycles = 8
 }
 
 // InterruptRequest
@@ -1103,7 +1103,7 @@ func (c *CPU) InterruptRequest() {
 		c.PC = (hi << 8) | lo
 
 		// Interrupts take time
-		c.cycles = 7
+		c.Cycles = 7
 	}
 }
 
@@ -1128,12 +1128,12 @@ func (c *CPU) NonMaskableInterrupt() {
 	c.PC = (hi << 8) | lo
 
 	// NMIs take time
-	c.cycles = 8
+	c.Cycles = 8
 }
 
 // Clock
 func (c *CPU) Clock() {
-	if c.cycles == 0 {
+	if c.Cycles == 0 {
 		c.opcode = c.read(c.PC)
 		c.PC++
 
@@ -1147,14 +1147,14 @@ func (c *CPU) Clock() {
 		addrModeCycles := c.currentInstruction.AddrMode(c)
 		opCycles := c.currentInstruction.Operate(c)
 
-		c.cycles = baseCycles + addrModeCycles + opCycles
+		c.Cycles = baseCycles + addrModeCycles + opCycles
 
 		// Ensure U is set after execution as well (might be cleared by PLP?)
 		c.setFlag(U, true)
 
 	}
 
-	c.cycles--
+	c.Cycles--
 	c.totalCycles++
 }
 
