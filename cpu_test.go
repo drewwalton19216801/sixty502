@@ -308,6 +308,160 @@ func TestLDA(t *testing.T) {
 	}
 }
 
+// TestLDX tests various Load X instructions.
+func TestLDX(t *testing.T) {
+	cpu, bus := setupCPU()
+	startAddr := uint16(0x0400)
+
+	tests := []struct {
+		name     string
+		program  []uint8
+		value    uint8  // Value expected in X
+		zero     bool   // Expected Z flag state
+		negative bool   // Expected N flag state
+		setup    func() // Optional setup before running (e.g., set X/Y)
+	}{
+		{
+			"Immediate",
+			[]uint8{0xA2, 0x42, 0x00}, // LDX #$42, BRK
+			0x42, false, false, nil,
+		},
+		{
+			"Immediate Zero",
+			[]uint8{0xA2, 0x00, 0x00}, // LDX #$00, BRK
+			0x00, true, false, nil,
+		},
+		{
+			"Immediate Negative",
+			[]uint8{0xA2, 0x88, 0x00}, // LDX #$88, BRK
+			0x88, false, true, nil,
+		},
+		{
+			"ZeroPage",
+			[]uint8{0xA6, 0x30, 0x00}, // LDX $30, BRK
+			0x55, false, false, func() { bus.Write(0x0030, 0x55) },
+		},
+		{
+			"ZeroPage,Y",
+			[]uint8{0xB6, 0x30, 0x00}, // LDX $30,Y, BRK
+			0x66, false, false, func() { cpu.Y = 0x05; bus.Write(0x0035, 0x66) },
+		},
+		{
+			"Absolute",
+			[]uint8{0xAE, 0xCD, 0xAB, 0x00}, // LDX $ABCD, BRK
+			0x88, false, true, func() { bus.Write(0xABCD, 0x88) },
+		},
+		{
+			"Absolute,Y",
+			[]uint8{0xBE, 0xCD, 0xAB, 0x00}, // LDX $ABCD,Y, BRK
+			0x99, false, true, func() { cpu.Y = 0x10; bus.Write(0xABCD+0x10, 0x99) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset CPU state for each test
+			cpu, bus = setupCPU() // Get fresh instances
+			if tt.setup != nil {
+				tt.setup()
+			}
+
+			bus.load(startAddr, tt.program)
+			cpu.PC = startAddr
+			cpu.cycles = 0 // Start execution immediately
+
+			runUntilBrk(cpu, bus, 20) // Allow enough cycles
+
+			if cpu.X != tt.value {
+				t.Errorf("LDX %s failed: Expected X=0x%02X, got 0x%02X", tt.name, tt.value, cpu.X)
+			}
+			if cpu.getFlag(Z) != tt.zero {
+				t.Errorf("LDX %s failed: Expected Z flag=%v, got %v", tt.name, tt.zero, cpu.getFlag(Z))
+			}
+			if cpu.getFlag(N) != tt.negative {
+				t.Errorf("LDX %s failed: Expected N flag=%v, got %v", tt.name, tt.negative, cpu.getFlag(N))
+			}
+		})
+	}
+}
+
+// TestLDY tests various Load Y instructions.
+func TestLDY(t *testing.T) {
+	cpu, bus := setupCPU()
+	startAddr := uint16(0x0500)
+
+	tests := []struct {
+		name     string
+		program  []uint8
+		value    uint8  // Value expected in Y
+		zero     bool   // Expected Z flag state
+		negative bool   // Expected N flag state
+		setup    func() // Optional setup before running (e.g., set X/Y)
+	}{
+		{
+			"Immediate",
+			[]uint8{0xA0, 0x42, 0x00}, // LDY #$42, BRK
+			0x42, false, false, nil,
+		},
+		{
+			"Immediate Zero",
+			[]uint8{0xA0, 0x00, 0x00}, // LDY #$00, BRK
+			0x00, true, false, nil,
+		},
+		{
+			"Immediate Negative",
+			[]uint8{0xA0, 0x88, 0x00}, // LDY #$88, BRK
+			0x88, false, true, nil,
+		},
+		{
+			"ZeroPage",
+			[]uint8{0xA4, 0x30, 0x00}, // LDY $30, BRK
+			0x55, false, false, func() { bus.Write(0x0030, 0x55) },
+		},
+		{
+			"ZeroPage,X",
+			[]uint8{0xB4, 0x30, 0x00}, // LDY $30,X, BRK
+			0x66, false, false, func() { cpu.X = 0x05; bus.Write(0x0035, 0x66) },
+		},
+		{
+			"Absolute",
+			[]uint8{0xAC, 0xCD, 0xAB, 0x00}, // LDY $ABCD, BRK
+			0x88, false, true, func() { bus.Write(0xABCD, 0x88) },
+		},
+		{
+			"Absolute,X",
+			[]uint8{0xBC, 0xCD, 0xAB, 0x00}, // LDY $ABCD,X, BRK
+			0x99, false, true, func() { cpu.X = 0x10; bus.Write(0xABCD+0x10, 0x99) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset CPU state for each test
+			cpu, bus = setupCPU() // Get fresh instances
+			if tt.setup != nil {
+				tt.setup()
+			}
+
+			bus.load(startAddr, tt.program)
+			cpu.PC = startAddr
+			cpu.cycles = 0 // Start execution immediately
+
+			runUntilBrk(cpu, bus, 20) // Allow enough cycles
+
+			if cpu.Y != tt.value {
+				t.Errorf("LDY %s failed: Expected Y=0x%02X, got 0x%02X", tt.name, tt.value, cpu.Y)
+			}
+			if cpu.getFlag(Z) != tt.zero {
+				t.Errorf("LDY %s failed: Expected Z flag=%v, got %v", tt.name, tt.zero, cpu.getFlag(Z))
+			}
+			if cpu.getFlag(N) != tt.negative {
+				t.Errorf("LDY %s failed: Expected N flag=%v, got %v", tt.name, tt.negative, cpu.getFlag(N))
+			}
+		})
+	}
+}
+
 // TestSTA tests various Store Accumulator instructions.
 func TestSTA(t *testing.T) {
 	cpu, bus := setupCPU()
