@@ -482,6 +482,11 @@ func (c *CPU) LSR() uint8 {
 
 func (c *CPU) NOP() uint8 {
 	switch c.opcode {
+	case 0x1C:
+	case 0x3C:
+	case 0x5C:
+	case 0x7C:
+	case 0xDC:
 	case 0xFC:
 		// Need to fetch data even if not used, ABX addressing mode does reads
 		c.fetchDataIfNeeded()
@@ -881,8 +886,41 @@ func (c *CPU) buildLookupTable() {
 
 	c.lookup[0xEA] = Instruction{Name: "NOP", Operate: NOP, AddrMode: IMP, Cycles: 2}
 
-	// Illegal NOP example
-	c.lookup[0xFC] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 if page crossed
+	// Illegal NOPs
+	// https://www.masswerk.at/6502/6502_instruction_set.html#NOPs
+	c.lookup[0x1A] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+	c.lookup[0x3A] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+	c.lookup[0x5A] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+	c.lookup[0x7A] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+	c.lookup[0xDA] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+	c.lookup[0xFA] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMP, Cycles: 2, Illegal: true}
+
+	c.lookup[0x80] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMM, Cycles: 2, Illegal: true}
+	c.lookup[0x82] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMM, Cycles: 2, Illegal: true}
+	c.lookup[0x89] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMM, Cycles: 2, Illegal: true}
+	c.lookup[0xC2] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMM, Cycles: 2, Illegal: true}
+	c.lookup[0xE2] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: IMM, Cycles: 2, Illegal: true}
+
+	c.lookup[0x04] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZP0, Cycles: 3, Illegal: true}
+	c.lookup[0x44] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZP0, Cycles: 3, Illegal: true}
+	c.lookup[0x64] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZP0, Cycles: 3, Illegal: true}
+
+	c.lookup[0x14] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+	c.lookup[0x34] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+	c.lookup[0x54] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+	c.lookup[0x74] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+	c.lookup[0xD4] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+	c.lookup[0xF4] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ZPX, Cycles: 4, Illegal: true}
+
+	c.lookup[0x0C] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABS, Cycles: 4, Illegal: true}
+
+	c.lookup[0x1C] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+	c.lookup[0x3C] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+	c.lookup[0x5C] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+	c.lookup[0x7C] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+	c.lookup[0xDC] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+	c.lookup[0xFC] = Instruction{Name: "*NOP", Operate: NOP, AddrMode: ABX, Cycles: 4, Illegal: true} // +1 cycle if page crossed
+
 }
 
 // --- Core Execution ---
