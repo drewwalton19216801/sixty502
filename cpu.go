@@ -925,7 +925,7 @@ func (c *CPU) buildLookupTable() {
 
 // --- Core Execution ---
 
-// Reset (remains the same)
+// Reset
 func (c *CPU) Reset() {
 	lo := uint16(c.read(0xFFFC))
 	hi := uint16(c.read(0xFFFD))
@@ -941,7 +941,7 @@ func (c *CPU) Reset() {
 	c.cycles = 8
 }
 
-// InterruptRequest (remains the same)
+// InterruptRequest
 func (c *CPU) InterruptRequest() {
 	if !c.getFlag(I) {
 		// Push PC onto stack (current PC)
@@ -967,7 +967,7 @@ func (c *CPU) InterruptRequest() {
 	}
 }
 
-// NonMaskableInterrupt (remains the same)
+// NonMaskableInterrupt
 func (c *CPU) NonMaskableInterrupt() {
 	// Push PC onto stack (current PC)
 	c.push16(c.PC)
@@ -991,7 +991,7 @@ func (c *CPU) NonMaskableInterrupt() {
 	c.cycles = 8
 }
 
-// Clock (remains the same)
+// Clock
 func (c *CPU) Clock() {
 	if c.cycles == 0 {
 		c.opcode = c.read(c.PC)
@@ -1020,7 +1020,7 @@ func (c *CPU) Clock() {
 
 // --- Debug Helpers ---
 
-// GetState (remains the same)
+// GetState
 func (c *CPU) GetState() string {
 	flagsStr := ""
 	if c.getFlag(N) {
