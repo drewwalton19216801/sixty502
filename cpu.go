@@ -1160,6 +1160,11 @@ func (c *CPU) Clock() {
 
 // --- Debug Helpers ---
 
+// Opcode returns the last fetched opcode. Useful for debugging/halt conditions.
+func (c *CPU) Opcode() uint8 {
+	return c.opcode
+}
+
 // GetState
 func (c *CPU) GetState() string {
 	flagsStr := ""
