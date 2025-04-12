@@ -104,7 +104,7 @@ func runUntilBrk(cpu *CPU, bus *MockBus, maxCycles uint64) uint64 {
 
 // Helper to format flags for error messages
 func flagsToString(p Flags) string {
-	return formatFlags(p) // Use the helper from cpu.go
+	return FormatFlags(p) // Use the helper from cpu.go
 }
 
 // Helper to compare expected vs actual flags and build error messages

@@ -1160,6 +1160,18 @@ func (c *CPU) Clock() {
 
 // --- Debug Helpers ---
 
+// GetCurrentInstruction returns a pointer to the current instruction definition.
+// Returns nil if no instruction has been fetched yet.
+func (c *CPU) GetCurrentInstruction() *Instruction {
+	return c.currentInstruction
+}
+
+// TotalCycles returns the total number of cycles executed by the CPU since its
+// creation. This is useful for profiling and debugging purposes.
+func (c *CPU) TotalCycles() uint64 {
+	return c.totalCycles
+}
+
 // Opcode returns the last fetched opcode. Useful for debugging/halt conditions.
 func (c *CPU) Opcode() uint8 {
 	return c.opcode
@@ -1218,8 +1230,8 @@ func (c *CPU) GetState() string {
 		c.PC, c.A, c.X, c.Y, uint8(c.P), flagsStr, c.SP, c.totalCycles, instrName, c.opcode)
 }
 
-// formatFlags - Helper to create the NVUBDIZC string
-func formatFlags(p Flags) string {
+// FormatFlags - Helper to create the NVUBDIZC string
+func FormatFlags(p Flags) string {
 	flags := []struct {
 		flag Flags
 		char byte
