@@ -1358,3 +1358,9 @@ func (c *CPU) Disassemble(startAddr, endAddr uint16) map[uint16]string {
 	}
 	return disassembly
 }
+
+// LookupTable exposes the instruction lookup table (use with caution).
+// Primarily intended for tools like disassemblers or UI displays.
+func (c *CPU) LookupTable() [256]Instruction {
+	return c.lookup
+}
