@@ -213,8 +213,8 @@ func (c *CPU) IND() uint8 {
 	// If the low byte of the pointer is $FF, the high byte is fetched
 	// from $xx00 instead of $xxFF + 1.
 	if ptrLo == 0x00FF {
-		hiByteAddr := ptr & 0xFF00 // Address of high byte wraps around page
-		c.addrAbs = (uint16(c.read(hiByteAddr)) << 8) | uint16(c.read(ptr))
+		// Read low byte from ptr, high byte from (ptr & 0xFF00)
+		c.addrAbs = uint16(c.read(ptr)) | (uint16(c.read(ptr&0xFF00)) << 8)
 	} else {
 		// Normal case: read from ptr and ptr+1
 		c.addrAbs = (uint16(c.read(ptr+1)) << 8) | uint16(c.read(ptr))
@@ -225,8 +225,10 @@ func (c *CPU) IND() uint8 {
 func (c *CPU) IZX() uint8 {
 	zpAddrBase := uint16(c.read(c.PC))
 	c.PC++
+	// Add X and wrap around zero page
 	zpAddr := (zpAddrBase + uint16(c.X)) & 0x00FF
 
+	// Read the effective address from zero page, wrapping around if needed
 	effAddrLo := uint16(c.read(zpAddr))
 	effAddrHi := uint16(c.read((zpAddr + 1) & 0x00FF))
 	c.addrAbs = (effAddrHi << 8) | effAddrLo
