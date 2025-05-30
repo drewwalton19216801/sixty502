@@ -2938,3 +2938,179 @@ func TestIllegalOpcode(t *testing.T) {
 	// cpu.Clock() // Execute the illegal instruction
 	// // Add assertions here based on how XXX behaves (e.g., logged error, halted state)
 }
+
+// TestIndirectAddressingModes verifies the behavior of indirect addressing modes (IND, IZX, IZY)
+func TestIndirectAddressingModes(t *testing.T) {
+	type IndirectTest struct {
+		name             string
+		mode             string // "IND", "IZX", "IZY"
+		opcode           uint8
+		initialX         uint8
+		initialY         uint8
+		pointerAddr      uint16 // Address containing the pointer
+		pointerValue     uint16 // Value the pointer points to
+		targetValue      uint8  // Value at the final address
+		expectedValue    uint8  // Expected value after operation
+		expectedZero     bool
+		expectedNegative bool
+		cycles           uint
+		pageCrossed      bool // For IZY, whether the addition of Y crosses a page boundary
+	}
+
+	tests := []IndirectTest{
+		// IND (Indirect) tests
+		{
+			name:          "IND: Basic indirect addressing",
+			mode:          "IND",
+			opcode:        0x6C, // JMP (indirect)
+			pointerAddr:   0x1234,
+			pointerValue:  0x5678,
+			targetValue:   0x42,
+			expectedValue: 0x42,
+			cycles:        5,
+		},
+		{
+			name:          "IND: Page boundary bug test",
+			mode:          "IND",
+			opcode:        0x6C,   // JMP (indirect)
+			pointerAddr:   0x12FF, // Points to last byte of page
+			pointerValue:  0x5678,
+			targetValue:   0x42,
+			expectedValue: 0x42,
+			cycles:        5,
+		},
+
+		// IZX (Indexed Indirect) tests
+		{
+			name:             "IZX: Basic indexed indirect",
+			mode:             "IZX",
+			opcode:           0xA1, // LDA (indirect,X)
+			initialX:         0x10,
+			pointerAddr:      0x0010, // Zero page address
+			pointerValue:     0x5678,
+			targetValue:      0x42,
+			expectedValue:    0x42,
+			expectedZero:     false,
+			expectedNegative: false,
+			cycles:           6,
+		},
+		{
+			name:             "IZX: Zero page wrap",
+			mode:             "IZX",
+			opcode:           0xA1, // LDA (indirect,X)
+			initialX:         0xFF,
+			pointerAddr:      0x00FF, // Will wrap to 0x0000
+			pointerValue:     0x5678,
+			targetValue:      0x42,
+			expectedValue:    0x42,
+			expectedZero:     false,
+			expectedNegative: false,
+			cycles:           6,
+		},
+
+		// IZY (Indirect Indexed) tests
+		{
+			name:             "IZY: Basic indirect indexed",
+			mode:             "IZY",
+			opcode:           0xB1, // LDA (indirect),Y
+			initialY:         0x10,
+			pointerAddr:      0x0010, // Zero page address
+			pointerValue:     0x5678,
+			targetValue:      0x42,
+			expectedValue:    0x42,
+			expectedZero:     false,
+			expectedNegative: false,
+			cycles:           5,
+			pageCrossed:      false,
+		},
+		{
+			name:             "IZY: Page boundary cross",
+			mode:             "IZY",
+			opcode:           0xB1, // LDA (indirect),Y
+			initialY:         0xFF,
+			pointerAddr:      0x0010,
+			pointerValue:     0x56FF, // Will cross page when Y is added
+			targetValue:      0x42,
+			expectedValue:    0x42,
+			expectedZero:     false,
+			expectedNegative: false,
+			cycles:           6, // Extra cycle for page cross
+			pageCrossed:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu, bus := setupCPU()
+			cpu.X = tt.initialX
+			cpu.Y = tt.initialY
+
+			// Set up the pointer
+			bus.Write(tt.pointerAddr, uint8(tt.pointerValue&0x00FF))
+			if tt.mode == "IND" && tt.pointerAddr&0x00FF == 0xFF {
+				// For the page boundary bug, write the high byte to the start of the page (0x1200 for 0x12FF)
+				bus.Write(tt.pointerAddr&0xFF00, uint8(tt.pointerValue>>8))
+			} else if tt.mode == "IZX" {
+				// For IZX, always write pointer bytes to the effective zero page address
+				effZP := (tt.pointerAddr + uint16(tt.initialX)) & 0x00FF
+				bus.Write(effZP, uint8(tt.pointerValue&0x00FF))
+				bus.Write((effZP+1)&0x00FF, uint8(tt.pointerValue>>8))
+			} else {
+				bus.Write(tt.pointerAddr+1, uint8(tt.pointerValue>>8))
+			}
+
+			// Set up the target value
+			targetAddr := tt.pointerValue
+			if tt.mode == "IZY" {
+				targetAddr += uint16(tt.initialY)
+			}
+
+			bus.Write(targetAddr, tt.targetValue)
+
+			// Set up the instruction
+			bus.Write(0xF100, tt.opcode) // Opcode
+			if tt.mode == "IND" {
+				bus.Write(0xF101, uint8(tt.pointerAddr&0x00FF))
+				bus.Write(0xF102, uint8(tt.pointerAddr>>8))
+			} else if tt.mode == "IZX" {
+				operand := uint8(tt.pointerAddr & 0x00FF)
+				bus.Write(0xF101, operand)
+				// Write pointer bytes to (operand + X) & 0xFF and (operand + X + 1) & 0xFF
+				effZP := (uint16(operand) + uint16(tt.initialX)) & 0x00FF
+				bus.Write(effZP, uint8(tt.pointerValue&0x00FF))
+				bus.Write((effZP+1)&0x00FF, uint8(tt.pointerValue>>8))
+			} else if tt.mode == "IZY" {
+				bus.Write(0xF101, uint8(tt.pointerAddr))
+			}
+
+			// Set up the CPU's program counter
+			cpu.PC = 0xF100
+
+			// Execute the instruction
+			cycles := runCycles(cpu, tt.cycles)
+
+			// Verify cycles
+			if uint64(cycles) != uint64(tt.cycles) {
+				t.Errorf("Expected %d cycles, got %d", tt.cycles, cycles)
+			}
+
+			// Verify the result based on the instruction
+			switch tt.opcode {
+			case 0x6C: // JMP (indirect)
+				if cpu.PC != targetAddr {
+					t.Errorf("Expected PC=0x%04X, got 0x%04X", targetAddr, cpu.PC)
+				}
+			case 0xA1, 0xB1: // LDA (indirect,X) or LDA (indirect),Y
+				if cpu.A != tt.expectedValue {
+					t.Errorf("Expected A=0x%02X, got 0x%02X", tt.expectedValue, cpu.A)
+				}
+				if cpu.getFlag(Z) != tt.expectedZero {
+					t.Errorf("Expected Z=%v, got %v", tt.expectedZero, cpu.getFlag(Z))
+				}
+				if cpu.getFlag(N) != tt.expectedNegative {
+					t.Errorf("Expected N=%v, got %v", tt.expectedNegative, cpu.getFlag(N))
+				}
+			}
+		})
+	}
+}
