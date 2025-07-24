@@ -1666,15 +1666,16 @@ func TestLogicInstructions(t *testing.T) {
 				var program []uint8
 
 				// Construct program based on addressing mode pointer
-				if tt.addrModePtr == immPtr {
+				switch tt.addrModePtr {
+				case immPtr:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if tt.addrModePtr == zp0Ptr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else {
+				default:
 					t.Fatalf("AND %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
@@ -1727,15 +1728,16 @@ func TestLogicInstructions(t *testing.T) {
 				var program []uint8
 
 				// Construct program based on addressing mode pointer
-				if tt.addrModePtr == immPtr {
+				switch tt.addrModePtr {
+				case immPtr:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if tt.addrModePtr == zp0Ptr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else {
+				default:
 					t.Fatalf("EOR %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
@@ -1787,15 +1789,16 @@ func TestLogicInstructions(t *testing.T) {
 				var program []uint8
 
 				// Construct program based on addressing mode pointer
-				if tt.addrModePtr == immPtr {
+				switch tt.addrModePtr {
+				case immPtr:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				} else if tt.addrModePtr == zp0Ptr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else {
+				default:
 					t.Fatalf("ORA %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
@@ -1848,13 +1851,14 @@ func TestLogicInstructions(t *testing.T) {
 				var program []uint8
 
 				// Construct program based on addressing mode pointer
-				if tt.addrModePtr == zp0Ptr {
+				switch tt.addrModePtr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				} else {
+				default:
 					t.Fatalf("BIT %s: Unhandled addressing mode pointer in test setup: %v", tt.name, tt.addrModePtr)
 				}
 
@@ -1977,20 +1981,21 @@ func TestShiftRotateInstructions(t *testing.T) {
 				addrArgLow := uint8(tt.memAddr & 0x00FF)
 				addrArgHigh := uint8(tt.memAddr >> 8)
 
-				if tt.addrModePtr == zp0Ptr {
+				switch tt.addrModePtr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = uint16(addrArgLow)
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == zpxPtr {
+				case zpxPtr:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					effectiveAddr = tt.memAddr
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == abxPtr {
+				case abxPtr:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					// Note: ABX cycle count depends on page cross, but the test provides the expected total.
@@ -1999,7 +2004,7 @@ func TestShiftRotateInstructions(t *testing.T) {
 					// For verification, calculate the expected final address.
 					effectiveAddr = tt.memAddr + uint16(cpu.X)
 					bus.Write(effectiveAddr, tt.initialValue) // Write to the *final* location for the test value
-				} else {
+				default:
 					t.Fatalf("%s %s: Unhandled addressing mode pointer in test setup: %v", tt.instrName, tt.name, tt.addrModePtr)
 				}
 			}
@@ -2170,7 +2175,7 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		cpu.PC = baseAddr
 		cpu.P = C | Z | I | U // I flag IS SET
 		initialP := cpu.P
-		initialSP := cpu.SP
+		startingSP := cpu.SP
 
 		cpu.InterruptRequest() // Attempt IRQ
 
@@ -2181,8 +2186,8 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		if cpu.P != initialP {
 			t.Errorf("IRQ (I=1) failed: P changed. Expected 0x%02X, got 0x%02X", initialP, cpu.P)
 		}
-		if cpu.SP != initialSP {
-			t.Errorf("IRQ (I=1) failed: SP changed. Expected 0x%02X, got 0x%02X", initialSP, cpu.SP)
+		if cpu.SP != startingSP {
+			t.Errorf("IRQ (I=1) failed: SP changed. Expected 0x%02X, got 0x%02X", startingSP, cpu.SP)
 		}
 		if cpu.Cycles != 0 {
 			t.Errorf("IRQ (I=1) failed: cpu.Cycles was set (%d), expected 0", cpu.Cycles)
@@ -2395,9 +2400,10 @@ func TestIncrementDecrement(t *testing.T) {
 			var targetReg *uint8 // Pointer to X or Y for verification
 
 			// Determine target register for IMP mode
-			if tt.instrName == "INX" || tt.instrName == "DEX" {
+			switch tt.instrName {
+			case "INX", "DEX":
 				targetReg = &cpu.X
-			} else if tt.instrName == "INY" || tt.instrName == "DEY" {
+			case "INY", "DEY":
 				targetReg = &cpu.Y
 			}
 
@@ -2413,26 +2419,27 @@ func TestIncrementDecrement(t *testing.T) {
 				addrArgLow := uint8(tt.memAddr & 0x00FF)
 				addrArgHigh := uint8(tt.memAddr >> 8)
 
-				if tt.addrModePtr == zp0Ptr {
+				switch tt.addrModePtr {
+				case zp0Ptr:
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = uint16(addrArgLow)
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == zpxPtr {
+				case zpxPtr:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == absPtr {
+				case absPtr:
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					effectiveAddr = tt.memAddr
 					bus.Write(effectiveAddr, tt.initialValue)
-				} else if tt.addrModePtr == abxPtr {
+				case abxPtr:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					// Similar to shifts, effective address calculated by CPU, verify final location
 					effectiveAddr = tt.memAddr + uint16(cpu.X)
 					bus.Write(effectiveAddr, tt.initialValue) // Write initial value to final address
-				} else {
+				default:
 					t.Fatalf("%s %s: Unhandled addressing mode pointer in test setup: %v", tt.instrName, tt.name, tt.addrModePtr)
 				}
 			}
@@ -3069,17 +3076,18 @@ func TestIndirectAddressingModes(t *testing.T) {
 
 			// Set up the instruction
 			bus.Write(0xF100, tt.opcode) // Opcode
-			if tt.mode == "IND" {
+			switch tt.mode {
+			case "IND":
 				bus.Write(0xF101, uint8(tt.pointerAddr&0x00FF))
 				bus.Write(0xF102, uint8(tt.pointerAddr>>8))
-			} else if tt.mode == "IZX" {
+			case "IZX":
 				operand := uint8(tt.pointerAddr & 0x00FF)
 				bus.Write(0xF101, operand)
 				// Write pointer bytes to (operand + X) & 0xFF and (operand + X + 1) & 0xFF
 				effZP := (uint16(operand) + uint16(tt.initialX)) & 0x00FF
 				bus.Write(effZP, uint8(tt.pointerValue&0x00FF))
 				bus.Write((effZP+1)&0x00FF, uint8(tt.pointerValue>>8))
-			} else if tt.mode == "IZY" {
+			case "IZY":
 				bus.Write(0xF101, uint8(tt.pointerAddr))
 			}
 
