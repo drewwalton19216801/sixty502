@@ -1,0 +1,17 @@
+# Benchmark configuration for github-action-benchmark
+# This file defines thresholds for performance regression detection
+
+# Alert threshold percentage (default: 200% means alert when benchmark gets 2x slower)
+alert-threshold: 150
+
+# Comment threshold percentage (default: 120% means comment when benchmark gets 20% slower)
+comment-threshold: 120
+
+# Maximum number of benchmark results to keep in history
+max-items-in-chart: 100
+
+# Whether to fail the workflow on performance regression
+fail-on-alert: true
+
+# Whether to post comments on commits when regression is detected
+comment-on-alert: true
