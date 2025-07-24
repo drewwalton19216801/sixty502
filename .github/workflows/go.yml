@@ -55,8 +55,6 @@ jobs:
         tool: 'go'
         # Where the output from the benchmark tool is stored
         output-file-path: benchmark_output.txt
-        # Where the previous data file is stored
-        external-data-json-path: ./cache/benchmark-data.json
         # Workflow will fail when an alert happens
         fail-on-alert: true
         # GitHub API token to make commit comment
@@ -85,12 +83,6 @@ jobs:
     - name: Run benchmarks
       run: go test -bench=. -benchmem | tee benchmark_output.txt
 
-    - name: Download previous benchmark data
-      uses: actions/cache@v4
-      with:
-        path: ./cache
-        key: ${{ runner.os }}-benchmark
-
     - name: Compare benchmark result
       uses: benchmark-action/github-action-benchmark@v1
       with:
@@ -98,8 +90,6 @@ jobs:
         tool: 'go'
         # Where the output from the benchmark tool is stored
         output-file-path: benchmark_output.txt
-        # Where the previous data file is stored
-        external-data-json-path: ./cache/benchmark-data.json
         # Do not push results, just compare
         auto-push: false
         # Workflow will fail when an alert happens
