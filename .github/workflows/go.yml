@@ -9,6 +9,12 @@ on:
   pull_request:
     branches: [ "dev" ]
 
+permissions:
+  # deployments permission to deploy GitHub pages website
+  deployments: write
+  # contents permission to update benchmark contents in gh-pages branch
+  contents: write
+
 jobs:
 
   build:
@@ -26,3 +32,81 @@ jobs:
 
     - name: Test
       run: go test -v ./...
+
+  benchmark:
+    runs-on: ubuntu-latest
+    # Only run benchmarks on push to dev branch (not on PRs)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem | tee benchmark_output.txt
+
+    - name: Store benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        # What benchmark tool the output came from
+        tool: 'go'
+        # Where the output from the benchmark tool is stored
+        output-file-path: benchmark_output.txt
+        # Where the previous data file is stored
+        external-data-json-path: ./cache/benchmark-data.json
+        # Workflow will fail when an alert happens
+        fail-on-alert: true
+        # GitHub API token to make commit comment
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        # Enable alert commit comment
+        comment-on-alert: true
+        # Mention @username on alert
+        alert-comment-cc-users: '@drewwalton19216801'
+        # Push and deploy GitHub pages branch automatically
+        auto-push: true
+        # Enable Job Summary for PRs
+        summary-always: true
+
+  benchmark-pr:
+    runs-on: ubuntu-latest
+    # Only run on pull requests for comparison
+    if: github.event_name == 'pull_request'
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem | tee benchmark_output.txt
+
+    - name: Download previous benchmark data
+      uses: actions/cache@v4
+      with:
+        path: ./cache
+        key: ${{ runner.os }}-benchmark
+
+    - name: Compare benchmark result
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        # What benchmark tool the output came from
+        tool: 'go'
+        # Where the output from the benchmark tool is stored
+        output-file-path: benchmark_output.txt
+        # Where the previous data file is stored
+        external-data-json-path: ./cache/benchmark-data.json
+        # Do not push results, just compare
+        auto-push: false
+        # Workflow will fail when an alert happens
+        fail-on-alert: true
+        # GitHub API token to make commit comment
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        # Enable alert commit comment
+        comment-on-alert: true
+        # Show the result comparison in job summary
+        summary-always: true

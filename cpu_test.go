@@ -2930,6 +2930,253 @@ func TestSBC(t *testing.T) {
 	}
 }
 
+// --- Benchmark Tests ---
+
+// BenchmarkSingleInstruction benchmarks individual instruction execution
+func BenchmarkSingleInstruction(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		program []uint8
+		cycles  uint
+	}{
+		{"LDA_IMM", []uint8{0xA9, 0x42, 0x00}, 2},
+		{"STA_ABS", []uint8{0x8D, 0x00, 0x30, 0x00}, 4},
+		{"ADC_IMM", []uint8{0x69, 0x10, 0x00}, 2},
+		{"JMP_ABS", []uint8{0x4C, 0x00, 0x80, 0x00}, 3},
+		{"BNE_REL", []uint8{0xD0, 0xFE, 0x00}, 2}, // Branch not taken
+		{"JSR_RTS", []uint8{0x20, 0x05, 0x80, 0x00, 0x00, 0x60, 0x00}, 6}, // JSR + RTS
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			cpu, bus := setupCPU()
+			bus.load(0x8000, bm.program)
+			cpu.PC = 0x8000
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cpu.PC = 0x8000
+				cpu.Cycles = 0
+				runCycles(cpu, bm.cycles)
+			}
+		})
+	}
+}
+
+// BenchmarkCPUClock benchmarks the core Clock() method
+func BenchmarkCPUClock(b *testing.B) {
+	cpu, bus := setupCPU()
+	// Simple NOP loop
+	program := make([]uint8, 256)
+	for i := 0; i < 255; i++ {
+		program[i] = 0xEA // NOP
+	}
+	program[255] = 0x00 // BRK
+	bus.load(0x8000, program)
+	cpu.PC = 0x8000
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cpu.Clock()
+		if cpu.PC >= 0x80FF { // Reset if we hit BRK
+			cpu.PC = 0x8000
+			cpu.Cycles = 0
+		}
+	}
+}
+
+// BenchmarkMemoryAccess benchmarks different memory access patterns
+func BenchmarkMemoryAccess(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		program []uint8
+	}{
+		{"ZeroPage", []uint8{0xA5, 0x10, 0x00}},     // LDA $10
+		{"Absolute", []uint8{0xAD, 0x00, 0x30, 0x00}}, // LDA $3000
+		{"Indexed", []uint8{0xBD, 0x00, 0x30, 0x00}},  // LDA $3000,X
+		{"Indirect", []uint8{0xB1, 0x10, 0x00}},       // LDA ($10),Y
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			cpu, bus := setupCPU()
+			// Setup memory for indirect addressing
+			bus.Write(0x10, 0x00)
+			bus.Write(0x11, 0x30)
+			bus.Write(0x3000, 0x42)
+			cpu.X = 0x05
+			cpu.Y = 0x05
+
+			bus.load(0x8000, bm.program)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cpu.PC = 0x8000
+				cpu.Cycles = 0
+				runCycles(cpu, 4) // Max cycles for any of these instructions
+			}
+		})
+	}
+}
+
+// BenchmarkArithmetic benchmarks arithmetic operations
+func BenchmarkArithmetic(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		program []uint8
+	}{
+		{"ADC", []uint8{0x69, 0x01, 0x00}}, // ADC #$01
+		{"SBC", []uint8{0xE9, 0x01, 0x00}}, // SBC #$01
+		{"CMP", []uint8{0xC9, 0x42, 0x00}}, // CMP #$42
+		{"AND", []uint8{0x29, 0xFF, 0x00}}, // AND #$FF
+		{"ORA", []uint8{0x09, 0x80, 0x00}}, // ORA #$80
+		{"EOR", []uint8{0x49, 0x55, 0x00}}, // EOR #$55
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			cpu, bus := setupCPU()
+			cpu.A = 0x42 // Set initial accumulator value
+			bus.load(0x8000, bm.program)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cpu.PC = 0x8000
+				cpu.Cycles = 0
+				cpu.A = 0x42 // Reset accumulator
+				runCycles(cpu, 2)
+			}
+		})
+	}
+}
+
+// BenchmarkBranching benchmarks branch instructions
+func BenchmarkBranching(b *testing.B) {
+	benchmarks := []struct {
+		name       string
+		program    []uint8
+		setupFlags func(*CPU)
+		taken      bool
+	}{
+		{"BEQ_Taken", []uint8{0xF0, 0x02, 0x00}, func(c *CPU) { c.setFlag(Z, true) }, true},
+		{"BEQ_NotTaken", []uint8{0xF0, 0x02, 0x00}, func(c *CPU) { c.setFlag(Z, false) }, false},
+		{"BNE_Taken", []uint8{0xD0, 0x02, 0x00}, func(c *CPU) { c.setFlag(Z, false) }, true},
+		{"BNE_NotTaken", []uint8{0xD0, 0x02, 0x00}, func(c *CPU) { c.setFlag(Z, true) }, false},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			cpu, bus := setupCPU()
+			bus.load(0x8000, bm.program)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cpu.PC = 0x8000
+				cpu.Cycles = 0
+				bm.setupFlags(cpu)
+				expectedCycles := uint(2)
+				if bm.taken {
+					expectedCycles = 3 // Branch taken adds 1 cycle
+				}
+				runCycles(cpu, expectedCycles)
+			}
+		})
+	}
+}
+
+// BenchmarkStackOperations benchmarks stack push/pop operations
+func BenchmarkStackOperations(b *testing.B) {
+	benchmarks := []struct {
+		name    string
+		program []uint8
+		cycles  uint
+	}{
+		{"PHA", []uint8{0x48, 0x00}, 3},
+		{"PLA", []uint8{0x68, 0x00}, 4},
+		{"PHP", []uint8{0x08, 0x00}, 3},
+		{"PLP", []uint8{0x28, 0x00}, 4},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			cpu, bus := setupCPU()
+			cpu.A = 0x42
+			cpu.P = U | I | N | Z // Set some flags for PHP/PLP
+			bus.load(0x8000, bm.program)
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				cpu.PC = 0x8000
+				cpu.Cycles = 0
+				cpu.SP = 0xFD // Reset stack pointer
+				runCycles(cpu, bm.cycles)
+			}
+		})
+	}
+}
+
+// BenchmarkCompleteProgram benchmarks execution of a complete small program
+func BenchmarkCompleteProgram(b *testing.B) {
+	// Simple program: Load value, add 1, store result, loop
+	program := []uint8{
+		0xA9, 0x00,       // LDA #$00
+		0x8D, 0x00, 0x30, // STA $3000
+		0xAD, 0x00, 0x30, // LDA $3000  ; Loop start
+		0x69, 0x01,       // ADC #$01
+		0x8D, 0x00, 0x30, // STA $3000
+		0xC9, 0x10,       // CMP #$10
+		0xD0, 0xF5,       // BNE Loop (branch back to LDA $3000)
+		0x00,             // BRK
+	}
+
+	b.Run("CounterLoop", func(b *testing.B) {
+		cpu, bus := setupCPU()
+		bus.load(0x8000, program)
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			cpu.PC = 0x8000
+			cpu.Cycles = 0
+			cpu.A = 0
+			cpu.P = U | I
+			bus.Write(0x3000, 0x00) // Reset memory
+			runUntilBrk(cpu, bus, 1000) // Allow enough cycles for completion
+		}
+	})
+}
+
+// BenchmarkInterrupts benchmarks interrupt handling
+func BenchmarkInterrupts(b *testing.B) {
+	b.Run("IRQ", func(b *testing.B) {
+		cpu, _ := setupCPU()
+		cpu.P = U // Clear I flag to allow interrupts
+		cpu.PC = 0x8000
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			cpu.PC = 0x8000
+			cpu.SP = 0xFD
+			cpu.P = U
+			cpu.Cycles = 0
+			cpu.InterruptRequest() // Trigger interrupt
+		}
+	})
+
+	b.Run("NMI", func(b *testing.B) {
+		cpu, _ := setupCPU()
+		cpu.PC = 0x8000
+
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			cpu.PC = 0x8000
+			cpu.SP = 0xFD
+			cpu.P = U | I
+			cpu.Cycles = 0
+			cpu.NonMaskableInterrupt() // Trigger NMI
+		}
+	})
+}
+
 // --- Placeholder Tests for Complex Instructions ---
 // Add more tests here as you implement instructions like ADC, SBC, branches, shifts etc.
 
