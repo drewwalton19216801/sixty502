@@ -126,6 +126,10 @@ type CPU struct {
 
 	// Total cycles executed (for debugging/profiling)
 	totalCycles uint64
+
+	// Error handling
+	errorHandler ErrorHandler
+	lastError    *CPUError
 }
 
 // Instruction struct: Use method expressions for types
