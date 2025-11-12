@@ -272,39 +272,6 @@ func (c *CPU) Clock() error {
 	return nil
 }
 
-// --- Accessor Methods ---
-
-// RemainingCycles returns the number of cycles remaining for the current instruction
-func (c *CPU) RemainingCycles() uint8 {
-	return c.cycles
-}
-
-// SetCycles sets the number of cycles remaining (for testing/debugging)
-func (c *CPU) SetCycles(cycles uint8) {
-	c.cycles = cycles
-}
-
-// TotalCycles returns the total number of cycles executed by the CPU since its
-// creation. This is useful for profiling and debugging purposes.
-func (c *CPU) TotalCycles() uint64 {
-	return c.totalCycles
-}
-
-// CurrentOpcode returns the opcode of the currently executing instruction
-func (c *CPU) CurrentOpcode() uint8 {
-	return c.opcode
-}
-
-// LookupInstruction returns the instruction definition for a given opcode
-func (c *CPU) LookupInstruction(opcode uint8) Instruction {
-	return c.lookup[opcode]
-}
-
-// IsIllegalOpcode returns true if the given opcode is illegal/unofficial
-func (c *CPU) IsIllegalOpcode(opcode uint8) bool {
-	return c.lookup[opcode].Illegal
-}
-
 // --- Instruction Cache Control ---
 
 // InvalidateInstructionCache clears the instruction cache
@@ -335,31 +302,6 @@ func (c *CPU) EnableInstructionCache() {
 	}
 }
 
-// --- State Inspection ---
-
-// GetStateSnapshot returns a snapshot of the current CPU state
-func (c *CPU) GetStateSnapshot() State {
-	instrName := "???"
-	if c.currentInstruction != nil {
-		instrName = c.currentInstruction.Name
-	}
-
-	return State{
-		A:               c.A,
-		X:               c.X,
-		Y:               c.Y,
-		SP:              c.SP,
-		PC:              c.PC,
-		P:               c.P,
-		Cycles:          c.cycles,
-		TotalCycles:     c.totalCycles,
-		Opcode:          c.opcode,
-		Instruction:     instrName,
-		InInterrupt:     c.inInterrupt,
-		InterruptVector: c.interruptVector,
-	}
-}
-
 // --- Debug Helpers ---
 
 // GetCurrentInstruction returns a pointer to the current instruction definition.
@@ -372,64 +314,6 @@ func (c *CPU) GetCurrentInstruction() *Instruction {
 // Deprecated: Use CurrentOpcode() instead
 func (c *CPU) Opcode() uint8 {
 	return c.opcode
-}
-
-// LastError returns the last error that occurred during execution
-func (c *CPU) LastError() *CPUError {
-	return c.lastError
-}
-
-// GetState
-func (c *CPU) GetState() string {
-	flagsStr := ""
-	if c.getFlag(N) {
-		flagsStr += "N"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(V) {
-		flagsStr += "V"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(U) {
-		flagsStr += "U"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(B) {
-		flagsStr += "B"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(D) {
-		flagsStr += "D"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(I) {
-		flagsStr += "I"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(Z) {
-		flagsStr += "Z"
-	} else {
-		flagsStr += "."
-	}
-	if c.getFlag(C) {
-		flagsStr += "C"
-	} else {
-		flagsStr += "."
-	}
-
-	instrName := "???"
-	if c.currentInstruction != nil {
-		instrName = c.currentInstruction.Name
-	}
-
-	return fmt.Sprintf("PC:%04X A:%02X X:%02X Y:%02X P:%02X[%s] SP:%02X CYC:%d (%s $%02X)",
-		c.PC, c.A, c.X, c.Y, uint8(c.P), flagsStr, c.SP, c.totalCycles, instrName, c.opcode)
 }
 
 // Disassemble - Disassemble instructions in memory range
