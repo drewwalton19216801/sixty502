@@ -285,6 +285,9 @@ type CPU struct {
 	nmiPending      bool   // NMI edge detected and pending
 	inInterrupt     bool   // Currently handling an interrupt
 	interruptVector uint16 // Vector being used for current interrupt
+
+	// Performance optimization
+	instrCache *InstructionCache
 }
 
 // Instruction struct: Use method expressions for types
@@ -340,6 +343,7 @@ func NewCPUWithConfig(bus Bus, config CPUConfig) *CPU {
 		SP:           0xFD,
 		variant:      config.Variant,
 		errorHandler: errorHandler,
+		instrCache:   NewInstructionCache(),
 	}
 
 	c.buildLookupTable()
