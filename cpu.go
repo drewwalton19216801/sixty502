@@ -86,12 +86,13 @@ type CPU struct {
 
 // Instruction struct: Use method expressions for types
 type Instruction struct {
-	Name     string           // Mnemonic (e.g., "LDA")
-	Operate  func(*CPU) uint8 // Function to execute the instruction's logic (accepts *CPU)
-	AddrMode func(*CPU) uint8 // Function to calculate the address and fetch data (accepts *CPU)
-	Cycles   uint8            // Base cycles for this instruction/mode
-	Length   uint8            // Length of the instruction in bytes
-	Illegal  bool             // Whether this is an official or unofficial/illegal opcode
+	Name         string           // Mnemonic (e.g., "LDA")
+	Operate      func(*CPU) uint8 // Function to execute the instruction's logic (accepts *CPU)
+	AddrMode     func(*CPU) uint8 // Function to calculate the address and fetch data (accepts *CPU)
+	AddrModeType AddrModeType     // Type of addressing mode
+	Cycles       uint8            // Base cycles for this instruction/mode
+	Length       uint8            // Length of the instruction in bytes
+	Illegal      bool             // Whether this is an official or unofficial/illegal opcode
 }
 
 // NewCPU (remains the same, buildLookupTable called within)
