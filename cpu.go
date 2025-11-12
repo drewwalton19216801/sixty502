@@ -855,19 +855,6 @@ func (c *CPU) ORA() uint8 {
 	return 0
 }
 
-func (c *CPU) PHA() uint8 { c.push(c.A); return 0 }
-func (c *CPU) PHP() uint8 {
-	c.push(uint8(c.P | B | U))
-	return 0
-}
-func (c *CPU) PLA() uint8 { c.A = c.pop(); c.setZNFlags(c.A); return 0 }
-func (c *CPU) PLP() uint8 {
-	poppedP := Flags(c.pop())
-	c.P = (poppedP & ^(B | U)) | (c.P & (B | U))
-	c.setFlag(U, true)
-	return 0
-}
-
 // ROL - Rotate Left
 func (c *CPU) ROL() uint8 {
 	var temp uint16
