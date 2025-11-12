@@ -80,6 +80,66 @@ func (a AddrModeType) String() string {
 	return "UNKNOWN"
 }
 
+// CPUVariant represents different 6502 processor variants
+type CPUVariant int
+
+const (
+	// VariantNMOS6502 is the original NMOS 6502 (1975)
+	// Used in: Apple II, Commodore 64, Atari 2600/800, BBC Micro
+	// Features: All documented bugs, decimal mode supported
+	VariantNMOS6502 CPUVariant = iota
+
+	// VariantCMOS65C02 is the CMOS 65C02 (1982)
+	// Used in: Apple IIc, Apple IIe (enhanced), later systems
+	// Features: Bug fixes, additional instructions, lower power
+	VariantCMOS65C02
+
+	// VariantRicoh2A03 is the NES/Famicom CPU (1983)
+	// Used in: Nintendo Entertainment System, Famicom
+	// Features: No decimal mode, integrated APU, different timing
+	VariantRicoh2A03
+
+	// VariantRicoh2A07 is the PAL NES CPU
+	// Same as 2A03 but with PAL timing
+	VariantRicoh2A07
+)
+
+// String returns the variant name
+func (v CPUVariant) String() string {
+	names := []string{
+		"NMOS 6502",
+		"CMOS 65C02",
+		"Ricoh 2A03 (NTSC)",
+		"Ricoh 2A07 (PAL)",
+	}
+	if int(v) < len(names) {
+		return names[v]
+	}
+	return "Unknown"
+}
+
+// SupportsDecimalMode returns true if the variant supports decimal mode
+func (v CPUVariant) SupportsDecimalMode() bool {
+	switch v {
+	case VariantRicoh2A03, VariantRicoh2A07:
+		return false
+	default:
+		return true
+	}
+}
+
+// HasIndirectJMPBug returns true if the variant has the indirect JMP page boundary bug
+func (v CPUVariant) HasIndirectJMPBug() bool {
+	switch v {
+	case VariantNMOS6502, VariantRicoh2A03, VariantRicoh2A07:
+		return true
+	case VariantCMOS65C02:
+		return false
+	default:
+		return true
+	}
+}
+
 // Bus interface (remains the same)
 type Bus interface {
 	Read(addr uint16) uint8
@@ -100,7 +160,7 @@ const (
 	N Flags = 1 << 7 // Negative
 )
 
-// CPU struct (remains the same)
+// CPU struct
 type CPU struct {
 	// Registers
 	A  uint8  // Accumulator
@@ -130,6 +190,9 @@ type CPU struct {
 	// Error handling
 	errorHandler ErrorHandler
 	lastError    *CPUError
+
+	// Variant configuration
+	variant CPUVariant
 }
 
 // Instruction struct: Use method expressions for types
@@ -143,28 +206,45 @@ type Instruction struct {
 	Illegal      bool             // Whether this is an official or unofficial/illegal opcode
 }
 
-// NewCPU creates a new CPU with a default logging error handler
+// NewCPU creates a new CPU with default NMOS 6502 variant and logging error handler
 func NewCPU(bus Bus) *CPU {
+	return NewCPUWithVariant(bus, VariantNMOS6502)
+}
+
+// NewCPUWithVariant creates a new CPU with specified variant and default logging error handler
+func NewCPUWithVariant(bus Bus, variant CPUVariant) *CPU {
 	c := &CPU{
 		bus:          bus,
 		P:            U | I,
 		SP:           0xFD,
+		variant:      variant,
 		errorHandler: &LoggingErrorHandler{Logger: log.Default()},
 	}
 	c.buildLookupTable()
 	return c
 }
 
-// NewCPUWithErrorHandler creates a new CPU with a custom error handler
+// NewCPUWithErrorHandler creates a new CPU with default NMOS 6502 variant and custom error handler
 func NewCPUWithErrorHandler(bus Bus, handler ErrorHandler) *CPU {
+	return NewCPUWithVariantAndErrorHandler(bus, VariantNMOS6502, handler)
+}
+
+// NewCPUWithVariantAndErrorHandler creates a new CPU with specified variant and error handler
+func NewCPUWithVariantAndErrorHandler(bus Bus, variant CPUVariant, handler ErrorHandler) *CPU {
 	c := &CPU{
 		bus:          bus,
 		P:            U | I,
 		SP:           0xFD,
+		variant:      variant,
 		errorHandler: handler,
 	}
 	c.buildLookupTable()
 	return c
+}
+
+// Variant returns the CPU variant
+func (c *CPU) Variant() CPUVariant {
+	return c.variant
 }
 
 // Bus Interaction (remains the same)
@@ -302,14 +382,11 @@ func (c *CPU) IND() uint8 {
 	c.PC++
 	ptr := (ptrHi << 8) | ptrLo
 
-	// Simulate the 6502 page boundary bug for indirect JMP:
-	// If the low byte of the pointer is $FF, the high byte is fetched
-	// from $xx00 instead of $xxFF + 1.
-	if ptrLo == 0x00FF {
-		// Read low byte from ptr, high byte from (ptr & 0xFF00)
+	if c.variant.HasIndirectJMPBug() && ptrLo == 0x00FF {
+		// NMOS bug: If low byte is $FF, high byte is fetched from $xx00
 		c.addrAbs = uint16(c.read(ptr)) | (uint16(c.read(ptr&0xFF00)) << 8)
 	} else {
-		// Normal case: read from ptr and ptr+1
+		// CMOS fix: Normal behavior
 		c.addrAbs = (uint16(c.read(ptr+1)) << 8) | uint16(c.read(ptr))
 	}
 	return 0
@@ -374,74 +451,62 @@ func (c *CPU) ADC() uint8 {
 		carry = 1
 	}
 
-	var temp uint16
-	var result uint8
-
-	if c.getFlag(D) {
-		// --- Decimal Mode ---
-		// N, V flags are officially undefined/unreliable in decimal mode.
-		// Common emulation practice is to set them based on the intermediate *binary* addition result.
-		// Z flag is set based on the final BCD result.
-		// C flag is set based on whether the BCD result exceeds 99.
-
-		// Calculate intermediate binary sum for N/V flags
-		binarySum := uint16(c.A) + uint16(c.fetchedData) + carry
-		// Set N based on bit 7 of binary sum
-		c.setFlag(N, (binarySum&0x80) > 0)
-		// Set V based on signed overflow of binary sum
-		// Overflow = sign(A) == sign(M) && sign(A) != sign(Result)
-		// Simplified: (~(A^M)) & (A^Result) & 0x80
-		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^binarySum)&0x0080) > 0)
-
-		// Perform BCD addition
-		low := (c.A & 0x0F) + (c.fetchedData & 0x0F) + uint8(carry)
-		if low > 9 {
-			low += 6 // BCD adjustment for lower nibble
-		}
-		// Calculate high nibble sum including carry from low nibble BCD adjustment
-		high := (c.A >> 4) + (c.fetchedData >> 4)
-		if low > 0x0F { // Check if carry generated from lower nibble (original sum > 9 or adjusted sum >= 16)
-			high++
-		}
-
-		if high > 9 {
-			high += 6 // BCD adjustment for upper nibble
-		}
-
-		// Set C flag if the BCD result (represented by high nibble) exceeded 9 ($99)
-		c.setFlag(C, high > 0x0F)
-
-		// Combine nibbles for the final BCD result
-		result = (high << 4) | (low & 0x0F)
-		c.A = result
-
-		// Set Z flag based on the final BCD result in A
-		c.setFlag(Z, c.A == 0)
-
-	} else {
-		// --- Binary Mode ---
-		temp = uint16(c.A) + uint16(c.fetchedData) + carry
-
-		// Set C flag (unsigned overflow)
-		c.setFlag(C, temp > 0xFF)
-
-		result = uint8(temp & 0x00FF)
-
-		// Set V flag (signed overflow)
-		// Check if signs of operands are the same but sign of result is different
-		// V = (~(A ^ M)) & (A ^ R) & 0x80 != 0
-		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^temp)&0x0080) > 0)
-
-		// Update Accumulator
-		c.A = result
-
-		// Set Z and N flags based on the result
-		c.setZNFlags(c.A)
+	// Check if decimal mode is supported and enabled
+	if c.getFlag(D) && c.variant.SupportsDecimalMode() {
+		return c.adcDecimal(carry)
 	}
 
-	// ADC potentially requires an extra cycle on page boundary crossing for certain indexed modes
-	// The addressing mode function already returned 1 if a page cross occurred.
-	return 1 // Return 1 indicating the operation itself takes at least 1 cycle, potentially more with page cross
+	// Binary mode (or decimal mode disabled)
+	return c.adcBinary(carry)
+}
+
+func (c *CPU) adcBinary(carry uint16) uint8 {
+	temp := uint16(c.A) + uint16(c.fetchedData) + carry
+	c.setFlag(C, temp > 0xFF)
+	result := uint8(temp & 0x00FF)
+	c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^temp)&0x0080) > 0)
+	c.A = result
+	c.setZNFlags(c.A)
+	return 1
+}
+
+func (c *CPU) adcDecimal(carry uint16) uint8 {
+	// Calculate binary result for N/V flags
+	binarySum := uint16(c.A) + uint16(c.fetchedData) + carry
+
+	// Variant-specific N/V flag handling
+	switch c.variant {
+	case VariantNMOS6502:
+		// NMOS: N/V based on binary intermediate result
+		c.setFlag(N, (binarySum&0x80) > 0)
+		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^binarySum)&0x0080) > 0)
+	case VariantCMOS65C02:
+		// CMOS: N/V based on binary intermediate result (same as NMOS)
+		c.setFlag(N, (binarySum&0x80) > 0)
+		c.setFlag(V, ((^(uint16(c.A) ^ uint16(c.fetchedData)))&(uint16(c.A)^binarySum)&0x0080) > 0)
+	}
+
+	// BCD arithmetic (corrected algorithm)
+	low := (c.A & 0x0F) + (c.fetchedData & 0x0F) + uint8(carry)
+	lowCarry := uint8(0)
+	if low > 9 {
+		low += 6
+		lowCarry = 1
+	}
+
+	high := (c.A >> 4) + (c.fetchedData >> 4) + lowCarry
+	if high > 9 {
+		high += 6
+		c.setFlag(C, true)
+	} else {
+		c.setFlag(C, false)
+	}
+
+	result := ((high & 0x0F) << 4) | (low & 0x0F)
+	c.A = result
+	c.setFlag(Z, c.A == 0)
+
+	return 1
 }
 
 func (c *CPU) AND() uint8 {
@@ -755,80 +820,75 @@ func (c *CPU) RTS() uint8 {
 // SBC - Subtract with Carry (Borrow)
 func (c *CPU) SBC() uint8 {
 	c.fetchDataIfNeeded()
-	// SBC is effectively A - M - (1 - C)
-	// which is equivalent to ADC with A + (~M) + C
-	value := uint16(c.fetchedData) ^ 0x00FF // ~M (one's complement)
-	var carry uint16 = 0                    // Carry In for the A + (~M) + C operation
+
+	// Check if decimal mode is supported and enabled
+	if c.getFlag(D) && c.variant.SupportsDecimalMode() {
+		return c.sbcDecimal()
+	}
+
+	// Binary mode (or decimal mode disabled)
+	return c.sbcBinary()
+}
+
+func (c *CPU) sbcBinary() uint8 {
+	value := uint16(c.fetchedData) ^ 0x00FF
+	var carry uint16 = 0
 	if c.getFlag(C) {
 		carry = 1
 	}
 
-	var temp uint16
-	var result uint8
+	temp := uint16(c.A) + value + carry
+	c.setFlag(C, temp > 0xFF)
+	result := uint8(temp & 0x00FF)
+	c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^temp)&0x0080) > 0)
+	c.A = result
+	c.setZNFlags(c.A)
 
-	if c.getFlag(D) {
-		// --- Decimal Mode ---
-		// Similar to ADC, N/V flags based on intermediate binary result, C/Z on final BCD result.
+	return 1
+}
 
-		// Calculate intermediate binary result A + (~M) + C for N/V flags
-		binarySum := uint16(c.A) + value + carry
-		// Set N based on bit 7 of binary sum
-		c.setFlag(N, (binarySum&0x80) > 0)
-		// Set V based on signed overflow of binary sum (A + ~M + C)
-		// Overflow = sign(A) == sign(~M) && sign(A) != sign(Result)
-		// Simplified: (~(A ^ ~M)) & (A ^ Result) & 0x80
-		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^binarySum)&0x0080) > 0)
-
-		// Perform BCD subtraction (A - M - borrow)
-		borrow_in := 1 - uint8(carry) // Convert C flag to borrow (0 or 1)
-
-		// Use int16 for intermediate subtraction to handle potential negative results easily
-		sub_res := int16(c.A) - int16(c.fetchedData) - int16(borrow_in)
-
-		low := (int16(c.A&0x0F) - int16(c.fetchedData&0x0F) - int16(borrow_in))
-		borrow_low := uint8(0)
-		if low < 0 {
-			low -= 6 // BCD adjust low nibble
-			borrow_low = 1
-		}
-
-		high := (int16(c.A>>4) - int16(c.fetchedData>>4) - int16(borrow_low))
-		if high < 0 {
-			high -= 6 // BCD adjust high nibble
-		}
-
-		// Combine nibbles
-		result = (uint8(high&0x0F) << 4) | uint8(low&0x0F)
-		c.A = result
-
-		// Set C flag: Set if result >= 0 (no borrow needed overall)
-		c.setFlag(C, sub_res >= 0)
-		// Set Z flag based on the final BCD result
-		c.setFlag(Z, c.A == 0)
-
-	} else {
-		// --- Binary Mode ---
-		temp = uint16(c.A) + value + carry
-
-		// Set C flag: Based on the carry out of the A + ~M + C addition.
-		// This is equivalent to "no borrow needed" for A - M - (1-C).
-		c.setFlag(C, temp > 0xFF)
-
-		result = uint8(temp & 0x00FF)
-
-		// Set V flag (signed overflow)
-		// V = (A ^ M) & (A ^ R) & 0x80 != 0  (for A - M - B)
-		// Equivalently use A + ~M + C: V = (~(A ^ ~M)) & (A ^ R) & 0x80
-		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^temp)&0x0080) > 0)
-
-		// Update Accumulator
-		c.A = result
-
-		// Set Z and N flags based on the result
-		c.setZNFlags(c.A)
+func (c *CPU) sbcDecimal() uint8 {
+	value := uint16(c.fetchedData) ^ 0x00FF
+	var carry uint16 = 0
+	if c.getFlag(C) {
+		carry = 1
 	}
 
-	// SBC potentially requires an extra cycle on page boundary crossing
+	// Calculate binary result for N/V flags
+	binarySum := uint16(c.A) + value + carry
+
+	// Variant-specific N/V flag handling
+	switch c.variant {
+	case VariantNMOS6502:
+		c.setFlag(N, (binarySum&0x80) > 0)
+		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^binarySum)&0x0080) > 0)
+	case VariantCMOS65C02:
+		c.setFlag(N, (binarySum&0x80) > 0)
+		c.setFlag(V, ((^(uint16(c.A) ^ value))&(uint16(c.A)^binarySum)&0x0080) > 0)
+	}
+
+	// BCD subtraction (corrected algorithm)
+	borrow_in := 1 - uint8(carry)
+
+	low := int16(c.A&0x0F) - int16(c.fetchedData&0x0F) - int16(borrow_in)
+	borrow_low := uint8(0)
+	if low < 0 {
+		low += 10
+		borrow_low = 1
+	}
+
+	high := int16(c.A>>4) - int16(c.fetchedData>>4) - int16(borrow_low)
+	if high < 0 {
+		high += 10
+		c.setFlag(C, false)
+	} else {
+		c.setFlag(C, true)
+	}
+
+	result := (uint8(high&0x0F) << 4) | uint8(low&0x0F)
+	c.A = result
+	c.setFlag(Z, c.A == 0)
+
 	return 1
 }
 
