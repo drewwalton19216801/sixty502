@@ -5,6 +5,7 @@ A comprehensive and accurate 6502 microprocessor emulator written in Go. This li
 ## Features
 
 ### Core CPU Implementation
+
 - **Complete 6502 Instruction Set**: All 151 official instructions implemented
 - **All Addressing Modes**: Immediate, Zero Page, Absolute, Indexed, Indirect, and Relative addressing
 - **Unofficial Opcodes**: Support for many undocumented/illegal 6502 instructions
@@ -14,12 +15,13 @@ A comprehensive and accurate 6502 microprocessor emulator written in Go. This li
 - **Interrupt Handling**: IRQ, NMI, and BRK interrupt support with proper vector handling
 
 ### Architecture
+
 - **Bus Interface**: Clean separation between CPU and memory through a Bus interface
 - **Method-Based Design**: Uses Go method expressions for efficient instruction dispatch
-- **Reflection-Based Comparisons**: Advanced function pointer comparison for addressing mode detection
 - **Comprehensive Testing**: Extensive test suite covering all instructions and edge cases
 
 ### Debugging & Development Tools
+
 - **Disassembler**: Built-in disassembly functionality for code analysis
 - **State Inspection**: Methods to examine CPU registers, flags, and execution state
 - **Cycle Counting**: Total cycle tracking for performance analysis
@@ -87,6 +89,7 @@ func main() {
 ## Architecture Overview
 
 ### Bus Interface
+
 The CPU communicates with memory through a simple Bus interface:
 
 ```go
@@ -99,6 +102,7 @@ type Bus interface {
 This design allows for flexible memory implementations, from simple RAM to complex memory-mapped I/O systems.
 
 ### Instruction System
+
 Instructions are defined using method expressions for efficient dispatch:
 
 ```go
@@ -113,7 +117,9 @@ type Instruction struct {
 ```
 
 ### Addressing Modes
+
 All 13 addressing modes are implemented:
+
 - **IMP**: Implied (no operand)
 - **IMM**: Immediate (#value)
 - **ZP0**: Zero Page ($00-FF)
@@ -149,6 +155,7 @@ go test -v
 ## Advanced Features
 
 ### Decimal Mode
+
 The emulator supports BCD (Binary Coded Decimal) arithmetic:
 
 ```go
@@ -157,6 +164,7 @@ cpu.setFlag(cpu6502.D, true) // Enable decimal mode
 ```
 
 ### Interrupt Handling
+
 Full interrupt support with proper vector handling:
 
 ```go
@@ -165,6 +173,7 @@ cpu.NonMaskableInterrupt() // Handle NMI
 ```
 
 ### Disassembly
+
 Built-in disassembler for code analysis:
 
 ```go
@@ -175,6 +184,7 @@ for addr, line := range disassembly {
 ```
 
 ### State Inspection
+
 Comprehensive state inspection methods:
 
 ```go
@@ -186,6 +196,7 @@ fmt.Printf("Total cycles: %d\n", cpu.TotalCycles())
 ## Performance
 
 The emulator is designed for accuracy over raw speed, but still provides good performance:
+
 - Cycle-accurate timing
 - Efficient instruction dispatch using method expressions
 - Minimal memory allocations during execution
@@ -194,6 +205,7 @@ The emulator is designed for accuracy over raw speed, but still provides good pe
 ## Compatibility
 
 This emulator is designed to be compatible with:
+
 - Original MOS Technology 6502
 - NES/Famicom CPU (Ricoh 2A03/2A07)
 - Apple II series
@@ -204,6 +216,7 @@ This emulator is designed to be compatible with:
 ## Contributing
 
 Contributions are welcome! Areas for improvement include:
+
 - Additional unofficial opcode implementations
 - Performance optimizations
 - More comprehensive test cases

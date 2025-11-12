@@ -5,6 +5,51 @@ import (
 	"log"
 )
 
+// ErrorType categorizes CPU errors
+type ErrorType uint8
+
+const (
+	ErrorIllegalOpcode ErrorType = iota
+	ErrorInvalidState
+	ErrorBusError
+)
+
+// CPUError represents an error during CPU execution
+type CPUError struct {
+	Type    ErrorType
+	Opcode  uint8
+	PC      uint16
+	Message string
+}
+
+func (e *CPUError) Error() string {
+	return fmt.Sprintf("CPU error at $%04X: %s (opcode $%02X)", e.PC, e.Message, e.Opcode)
+}
+
+// ErrorHandler defines how the CPU handles errors
+type ErrorHandler interface {
+	HandleError(err *CPUError) error
+}
+
+// StrictErrorHandler halts execution on any error
+type StrictErrorHandler struct{}
+
+func (h *StrictErrorHandler) HandleError(err *CPUError) error {
+	return err
+}
+
+// LoggingErrorHandler logs errors but continues execution
+type LoggingErrorHandler struct {
+	Logger *log.Logger
+}
+
+func (h *LoggingErrorHandler) HandleError(err *CPUError) error {
+	if h.Logger != nil {
+		h.Logger.Printf("CPU error: %v", err)
+	}
+	return nil // Continue execution
+}
+
 // AddrModeType represents the addressing mode of an instruction
 type AddrModeType uint8
 
@@ -81,6 +126,10 @@ type CPU struct {
 
 	// Total cycles executed (for debugging/profiling)
 	totalCycles uint64
+
+	// Error handling
+	errorHandler ErrorHandler
+	lastError    *CPUError
 }
 
 // Instruction struct: Use method expressions for types
@@ -94,12 +143,25 @@ type Instruction struct {
 	Illegal      bool             // Whether this is an official or unofficial/illegal opcode
 }
 
-// NewCPU (remains the same, buildLookupTable called within)
+// NewCPU creates a new CPU with a default logging error handler
 func NewCPU(bus Bus) *CPU {
 	c := &CPU{
-		bus: bus,
-		P:   U | I,
-		SP:  0xFD,
+		bus:          bus,
+		P:            U | I,
+		SP:           0xFD,
+		errorHandler: &LoggingErrorHandler{Logger: log.Default()},
+	}
+	c.buildLookupTable()
+	return c
+}
+
+// NewCPUWithErrorHandler creates a new CPU with a custom error handler
+func NewCPUWithErrorHandler(bus Bus, handler ErrorHandler) *CPU {
+	c := &CPU{
+		bus:          bus,
+		P:            U | I,
+		SP:           0xFD,
+		errorHandler: handler,
 	}
 	c.buildLookupTable()
 	return c
@@ -1159,8 +1221,9 @@ func (c *CPU) NonMaskableInterrupt() {
 	c.Cycles = 8
 }
 
-// Clock
-func (c *CPU) Clock() {
+// Clock executes one clock cycle of the CPU
+// Returns an error if an unrecoverable error occurs
+func (c *CPU) Clock() error {
 	if c.Cycles == 0 {
 		c.opcode = c.read(c.PC)
 		c.PC++
@@ -1168,6 +1231,23 @@ func (c *CPU) Clock() {
 		c.setFlag(U, true) // Ensure U is always set before execution
 
 		c.currentInstruction = &c.lookup[c.opcode]
+
+		// Check for illegal opcodes
+		if c.currentInstruction.Illegal {
+			err := &CPUError{
+				Type:    ErrorIllegalOpcode,
+				Opcode:  c.opcode,
+				PC:      c.PC - 1,
+				Message: fmt.Sprintf("illegal opcode $%02X", c.opcode),
+			}
+			c.lastError = err
+
+			if c.errorHandler != nil {
+				if handlerErr := c.errorHandler.HandleError(err); handlerErr != nil {
+					return handlerErr
+				}
+			}
+		}
 
 		baseCycles := c.currentInstruction.Cycles
 		// Call AddrMode and Operate methods via the function pointers in the struct
@@ -1184,6 +1264,7 @@ func (c *CPU) Clock() {
 
 	c.Cycles--
 	c.totalCycles++
+	return nil
 }
 
 // --- Debug Helpers ---
@@ -1203,6 +1284,11 @@ func (c *CPU) TotalCycles() uint64 {
 // Opcode returns the last fetched opcode. Useful for debugging/halt conditions.
 func (c *CPU) Opcode() uint8 {
 	return c.opcode
+}
+
+// LastError returns the last error that occurred during execution
+func (c *CPU) LastError() *CPUError {
+	return c.lastError
 }
 
 // GetState
