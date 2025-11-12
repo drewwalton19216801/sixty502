@@ -6,13 +6,15 @@ A comprehensive and accurate 6502 microprocessor emulator written in Go. This li
 
 ### Core CPU Implementation
 
+- **Multiple CPU Variants**: Support for NMOS 6502, CMOS 65C02, and Ricoh 2A03/2A07 (NES) variants
 - **Complete 6502 Instruction Set**: All 151 official instructions implemented
 - **All Addressing Modes**: Immediate, Zero Page, Absolute, Indexed, Indirect, and Relative addressing
 - **Unofficial Opcodes**: Support for many undocumented/illegal 6502 instructions
 - **Cycle-Accurate Timing**: Precise cycle counting including page boundary crossing penalties
 - **Status Flags**: Full implementation of all processor status flags (N, V, U, B, D, I, Z, C)
-- **Decimal Mode**: BCD arithmetic support for ADC and SBC instructions
+- **Variant-Specific Decimal Mode**: Accurate BCD arithmetic with variant-specific behavior
 - **Interrupt Handling**: IRQ, NMI, and BRK interrupt support with proper vector handling
+- **Hardware Bug Emulation**: Accurate emulation of the indirect JMP page boundary bug on NMOS variants
 
 ### Architecture
 
@@ -57,9 +59,12 @@ func (b *SimpleBus) Write(addr uint16, data uint8) {
 }
 
 func main() {
-    // Create bus and CPU
+    // Create bus and CPU (defaults to NMOS 6502)
     bus := &SimpleBus{}
     cpu := cpu6502.NewCPU(bus)
+    
+    // Or create with a specific variant:
+    // cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantRicoh2A03) // NES CPU
     
     // Load a simple program: LDA #$42, STA $0200, BRK
     bus.Write(0x8000, 0xA9) // LDA immediate
@@ -154,13 +159,41 @@ go test -v
 
 ## Advanced Features
 
-### Decimal Mode
+### CPU Variants
 
-The emulator supports BCD (Binary Coded Decimal) arithmetic:
+The emulator supports multiple 6502 variants with accurate behavior differences:
 
 ```go
+// NMOS 6502 (default) - Original chip with all documented bugs
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502)
+
+// CMOS 65C02 - Enhanced version with bug fixes
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantCMOS65C02)
+
+// Ricoh 2A03 - NES/Famicom CPU (no decimal mode)
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantRicoh2A03)
+
+// Ricoh 2A07 - PAL NES CPU (no decimal mode)
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantRicoh2A07)
+
+// Check variant capabilities
+if cpu.Variant().SupportsDecimalMode() {
+    // Decimal mode available
+}
+if cpu.Variant().HasIndirectJMPBug() {
+    // Has page boundary bug in JMP ($xxFF)
+}
+```
+
+### Decimal Mode
+
+Variant-specific BCD (Binary Coded Decimal) arithmetic:
+
+```go
+// Only works on variants that support decimal mode (NMOS, CMOS)
 cpu.setFlag(cpu6502.D, true) // Enable decimal mode
 // ADC and SBC will now perform BCD arithmetic
+// Ricoh variants ignore the D flag and always use binary mode
 ```
 
 ### Interrupt Handling
@@ -204,14 +237,20 @@ The emulator is designed for accuracy over raw speed, but still provides good pe
 
 ## Compatibility
 
-This emulator is designed to be compatible with:
+This emulator accurately emulates multiple 6502 variants:
 
-- Original MOS Technology 6502
-- NES/Famicom CPU (Ricoh 2A03/2A07)
-- Apple II series
-- Commodore 64
-- Atari 8-bit computers
-- And other 6502-based systems
+- **NMOS 6502** - Original MOS Technology chip (Apple II, Commodore 64, Atari 8-bit)
+  - Supports decimal mode with NMOS-specific N/V flag behavior
+  - Includes the indirect JMP page boundary bug
+- **CMOS 65C02** - Enhanced Western Design Center version (Apple IIc, IIe enhanced)
+  - Supports decimal mode with improved N/V flag behavior
+  - Fixes the indirect JMP page boundary bug
+- **Ricoh 2A03** - NES/Famicom CPU (NTSC)
+  - Decimal mode disabled (D flag ignored)
+  - Includes the indirect JMP page boundary bug
+- **Ricoh 2A07** - PAL NES CPU
+  - Decimal mode disabled (D flag ignored)
+  - Includes the indirect JMP page boundary bug
 
 ## Contributing
 
