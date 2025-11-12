@@ -26,6 +26,30 @@ func (e *CPUError) Error() string {
 	return fmt.Sprintf("CPU error at $%04X: %s (opcode $%02X)", e.PC, e.Message, e.Opcode)
 }
 
+// ErrorHandler defines how the CPU handles errors
+type ErrorHandler interface {
+	HandleError(err *CPUError) error
+}
+
+// StrictErrorHandler halts execution on any error
+type StrictErrorHandler struct{}
+
+func (h *StrictErrorHandler) HandleError(err *CPUError) error {
+	return err
+}
+
+// LoggingErrorHandler logs errors but continues execution
+type LoggingErrorHandler struct {
+	Logger *log.Logger
+}
+
+func (h *LoggingErrorHandler) HandleError(err *CPUError) error {
+	if h.Logger != nil {
+		h.Logger.Printf("CPU error: %v", err)
+	}
+	return nil // Continue execution
+}
+
 // AddrModeType represents the addressing mode of an instruction
 type AddrModeType uint8
 
