@@ -690,6 +690,10 @@ func (c *CPU) BRK() uint8 {
 	hi := uint16(c.read(0xFFFF))
 	c.PC = (hi << 8) | lo
 
+	// Set interrupt state (BRK uses IRQ vector)
+	c.inInterrupt = true
+	c.interruptVector = 0xFFFE
+
 	// BRK takes 7 cycles total (base cycles handled by lookup table)
 	// This function returns *extra* cycles, which should be 0 here.
 	return 0
@@ -901,6 +905,11 @@ func (c *CPU) RTI() uint8 {
 	c.P &^= B
 	c.P |= U
 	c.PC = c.pop16()
+
+	// Clear interrupt state
+	c.inInterrupt = false
+	c.interruptVector = 0
+
 	return 0
 }
 
@@ -1324,45 +1333,70 @@ func (c *CPU) Reset() {
 	c.cycles = 8
 }
 
-// InterruptRequest
+// InterruptRequest is deprecated. Use SetIRQ(true) instead.
+// This method is kept for backward compatibility.
 func (c *CPU) InterruptRequest() {
-	if !c.getFlag(I) {
-		// Push PC onto stack (current PC)
-		c.push16(c.PC)
-
-		// Push status register onto stack
-		// Note: B flag is CLEARed, U flag is set in the pushed copy
-		c.setFlag(B, false)
-		c.setFlag(U, true)
-		// --- Push P BEFORE setting I flag ---
-		c.push(uint8(c.P))
-
-		// Set Interrupt Disable flag AFTER push
-		c.setFlag(I, true)
-
-		// Read interrupt vector ($FFFE/F)
-		lo := uint16(c.read(0xFFFE))
-		hi := uint16(c.read(0xFFFF))
-		c.PC = (hi << 8) | lo
-
-		// Interrupts take time
-		c.cycles = 7
+	c.SetIRQ(true)
+	// Force immediate handling for backward compatibility
+	if !c.getFlag(I) && c.cycles == 0 {
+		c.handleIRQ()
 	}
 }
 
-// NonMaskableInterrupt
+// NonMaskableInterrupt is deprecated. Use SetNMI(false) after SetNMI(true) instead.
+// This method is kept for backward compatibility.
 func (c *CPU) NonMaskableInterrupt() {
-	// Push PC onto stack (current PC)
+	c.SetNMI(true)
+	c.SetNMI(false) // Create falling edge
+	// Force immediate handling for backward compatibility
+	if c.cycles == 0 {
+		c.handleNMI()
+	}
+}
+
+// SetIRQ sets the IRQ line state
+// IRQ is level-triggered: it will be serviced as long as the line is asserted
+func (c *CPU) SetIRQ(asserted bool) {
+	c.irqLine = asserted
+}
+
+// SetNMI sets the NMI line state
+// NMI is edge-triggered: it will be serviced on a falling edge (high to low)
+func (c *CPU) SetNMI(asserted bool) {
+	// Detect falling edge (high to low transition)
+	if c.nmiPrevious && !asserted {
+		c.nmiPending = true
+	}
+	c.nmiPrevious = asserted
+	c.nmiLine = asserted
+}
+
+// ClearNMI clears the pending NMI
+// This is called after NMI is serviced
+func (c *CPU) ClearNMI() {
+	c.nmiPending = false
+}
+
+// HasPendingInterrupt returns true if any interrupt is pending
+func (c *CPU) HasPendingInterrupt() bool {
+	return c.nmiPending || (c.irqLine && !c.getFlag(I))
+}
+
+// handleNMI handles a Non-Maskable Interrupt
+// NMI takes 7 cycles and cannot be disabled
+func (c *CPU) handleNMI() error {
+	// NMI can hijack an IRQ sequence
+	// If we're in the middle of an IRQ, the vector changes to NMI
+
+	// Push PC onto stack (current PC, not PC+1)
 	c.push16(c.PC)
 
-	// Push status register onto stack
-	// Note: B flag is CLEARed, U flag is set in the pushed copy
+	// Push status register with B clear, U set
 	c.setFlag(B, false)
 	c.setFlag(U, true)
-	// --- Push P BEFORE setting I flag ---
 	c.push(uint8(c.P))
 
-	// Set Interrupt Disable flag AFTER push
+	// Set Interrupt Disable flag
 	c.setFlag(I, true)
 
 	// Read NMI vector ($FFFA/B)
@@ -1370,14 +1404,68 @@ func (c *CPU) NonMaskableInterrupt() {
 	hi := uint16(c.read(0xFFFB))
 	c.PC = (hi << 8) | lo
 
-	// NMIs take time
-	c.cycles = 8
+	// Clear the pending NMI
+	c.nmiPending = false
+
+	// Set interrupt state
+	c.inInterrupt = true
+	c.interruptVector = 0xFFFA
+
+	// NMI takes 7 cycles
+	c.cycles = 7
+
+	return nil
+}
+
+// handleIRQ handles an Interrupt Request
+// IRQ takes 7 cycles and can be disabled by the I flag
+func (c *CPU) handleIRQ() error {
+	// IRQ is ignored if I flag is set
+	if c.getFlag(I) {
+		return nil
+	}
+
+	// Push PC onto stack (current PC, not PC+1)
+	c.push16(c.PC)
+
+	// Push status register with B clear, U set
+	c.setFlag(B, false)
+	c.setFlag(U, true)
+	c.push(uint8(c.P))
+
+	// Set Interrupt Disable flag
+	c.setFlag(I, true)
+
+	// Read IRQ vector ($FFFE/F)
+	lo := uint16(c.read(0xFFFE))
+	hi := uint16(c.read(0xFFFF))
+	c.PC = (hi << 8) | lo
+
+	// Set interrupt state
+	c.inInterrupt = true
+	c.interruptVector = 0xFFFE
+
+	// IRQ takes 7 cycles
+	c.cycles = 7
+
+	return nil
 }
 
 // Clock executes one clock cycle of the CPU
 // Returns an error if an unrecoverable error occurs
 func (c *CPU) Clock() error {
 	if c.cycles == 0 {
+		// Check for interrupts BEFORE fetching next instruction
+		// This ensures interrupts are serviced between instructions
+		if c.nmiPending {
+			return c.handleNMI()
+		}
+
+		if c.irqLine && !c.getFlag(I) && !c.inInterrupt {
+			return c.handleIRQ()
+		}
+
+		// Normal instruction fetch
 		c.opcode = c.read(c.PC)
 		c.PC++
 
