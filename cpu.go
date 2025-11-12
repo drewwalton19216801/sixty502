@@ -758,27 +758,6 @@ func (c *CPU) JSR() uint8 {
 	return 0
 }
 
-func (c *CPU) LDA() uint8 {
-	c.fetchDataIfNeeded()
-	c.A = c.fetchedData
-	c.setZNFlags(c.A)
-	return 0
-}
-
-func (c *CPU) LDX() uint8 {
-	c.fetchDataIfNeeded()
-	c.X = c.fetchedData
-	c.setZNFlags(c.X)
-	return 0
-}
-
-func (c *CPU) LDY() uint8 {
-	c.fetchDataIfNeeded()
-	c.Y = c.fetchedData
-	c.setZNFlags(c.Y)
-	return 0
-}
-
 // LSR - Logical Shift Right
 func (c *CPU) LSR() uint8 {
 	var temp uint8
@@ -961,21 +940,6 @@ func (c *CPU) sbcDecimal() uint8 {
 
 	return 0
 }
-
-func (c *CPU) STA() uint8 {
-	c.write(c.addrAbs, c.A)
-	return 0
-}
-
-func (c *CPU) STX() uint8 { c.write(c.addrAbs, c.X); return 0 }
-func (c *CPU) STY() uint8 { c.write(c.addrAbs, c.Y); return 0 }
-
-func (c *CPU) TAX() uint8 { c.X = c.A; c.setZNFlags(c.X); return 0 }
-func (c *CPU) TAY() uint8 { c.Y = c.A; c.setZNFlags(c.Y); return 0 }
-func (c *CPU) TSX() uint8 { c.X = c.SP; c.setZNFlags(c.X); return 0 }
-func (c *CPU) TXA() uint8 { c.A = c.X; c.setZNFlags(c.A); return 0 }
-func (c *CPU) TXS() uint8 { c.SP = c.X; return 0 }
-func (c *CPU) TYA() uint8 { c.A = c.Y; c.setZNFlags(c.A); return 0 }
 
 func (c *CPU) XXX() uint8 {
 	log.Printf("ERROR: Illegal opcode $%02X encountered at $%04X", c.opcode, c.PC-1)
