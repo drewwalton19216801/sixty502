@@ -156,6 +156,62 @@ Run the test suite:
 go test -v
 ```
 
+## Examples
+
+The repository includes working examples demonstrating various features:
+
+### Running the Examples
+
+```bash
+# Basic example - simple program execution
+cd examples/basic
+go run main.go
+
+# Memory-mapped I/O example
+cd examples/memory-mapped
+go run main.go
+```
+
+### Available Examples
+
+- **`examples/basic/`** - Demonstrates basic CPU usage with a simple counting program
+  - Shows how to load a program into memory
+  - Demonstrates setting up reset vectors
+  - Shows state inspection and cycle counting
+
+- **`examples/memory-mapped/`** - Demonstrates memory-mapped I/O
+  - Shows ROM/RAM/IO memory separation
+  - Demonstrates writing to memory-mapped I/O ports
+  - Example outputs "HELLO" via I/O port
+
+### Creating Your Own Examples
+
+Use the examples as templates for your own programs:
+
+```go
+// 1. Implement the Bus interface
+type MyBus struct {
+    ram [65536]uint8
+}
+
+func (b *MyBus) Read(addr uint16) uint8 { return b.ram[addr] }
+func (b *MyBus) Write(addr uint16, data uint8) { b.ram[addr] = data }
+
+// 2. Create CPU and load program
+bus := &MyBus{}
+cpu := cpu6502.NewCPU(bus)
+
+// 3. Set reset vector and reset CPU
+bus.Write(0xFFFC, 0x00)
+bus.Write(0xFFFD, 0x80)
+cpu.Reset()
+
+// 4. Execute
+for cpu.RemainingCycles() > 0 {
+    cpu.Clock()
+}
+```
+
 ## Advanced Features
 
 ### CPU Configuration
@@ -221,15 +277,6 @@ cpu.setFlag(cpu6502.D, true) // Enable decimal mode
 // Ricoh variants ignore the D flag and always use binary mode
 ```
 
-### Interrupt Handling
-
-Full interrupt support with proper vector handling:
-
-```go
-cpu.InterruptRequest()     // Handle IRQ
-cpu.NonMaskableInterrupt() // Handle NMI
-```
-
 ### Disassembly
 
 Built-in disassembler for code analysis:
@@ -263,6 +310,146 @@ fmt.Printf("Current opcode: $%02X\n", cpu.CurrentOpcode())
 // Check instruction legality
 if cpu.IsIllegalOpcode(0x02) {
     fmt.Println("Opcode $02 is illegal")
+}
+```
+
+## Advanced Usage
+
+### Custom Memory Mapping
+
+Implement complex memory systems with memory-mapped I/O:
+
+```go
+type MemoryMappedBus struct {
+    ram [0x8000]uint8  // RAM: $0000-$7FFF
+    rom [0x8000]uint8  // ROM: $8000-$FFFF
+    ioPort uint8       // Memory-mapped I/O at $6000
+}
+
+func (b *MemoryMappedBus) Read(addr uint16) uint8 {
+    switch {
+    case addr < 0x6000:
+        return b.ram[addr]
+    case addr == 0x6000:
+        // Memory-mapped I/O read
+        return b.ioPort
+    case addr < 0x8000:
+        return b.ram[addr]
+    default:
+        // ROM area
+        return b.rom[addr-0x8000]
+    }
+}
+
+func (b *MemoryMappedBus) Write(addr uint16, data uint8) {
+    switch {
+    case addr < 0x6000:
+        b.ram[addr] = data
+    case addr == 0x6000:
+        // Memory-mapped I/O write
+        b.ioPort = data
+        fmt.Printf("I/O Port write: $%02X\n", data)
+    case addr < 0x8000:
+        b.ram[addr] = data
+    default:
+        // ROM writes are ignored
+    }
+}
+```
+
+### Interrupt Handling
+
+Handle IRQ and NMI interrupts with proper timing:
+
+```go
+// Level-triggered IRQ
+cpu.SetIRQ(true)  // Assert IRQ line
+for i := 0; i < 100; i++ {
+    cpu.Clock()
+}
+cpu.SetIRQ(false) // Clear IRQ line
+
+// Edge-triggered NMI (falling edge)
+cpu.SetNMI(true)   // Set NMI line high
+cpu.SetNMI(false)  // Falling edge triggers NMI
+
+// Check for pending interrupts
+if cpu.HasPendingInterrupt() {
+    fmt.Println("Interrupt pending")
+}
+
+// Set interrupt vectors in memory
+bus.Write(0xFFFA, 0x00) // NMI vector low
+bus.Write(0xFFFB, 0xF0) // NMI vector high -> $F000
+bus.Write(0xFFFE, 0x00) // IRQ vector low
+bus.Write(0xFFFF, 0xF2) // IRQ vector high -> $F200
+```
+
+### Error Handling
+
+Configure how the CPU handles errors:
+
+```go
+// Strict mode - halt on illegal opcodes
+cpu := cpu6502.NewBuilder(bus).
+    WithStrictMode().
+    Build()
+
+for {
+    if err := cpu.Clock(); err != nil {
+        fmt.Printf("Execution halted: %v\n", err)
+        break
+    }
+}
+
+// Custom error handler
+type CustomErrorHandler struct{}
+
+func (h *CustomErrorHandler) HandleError(err *cpu6502.CPUError) error {
+    switch err.Type {
+    case cpu6502.ErrorIllegalOpcode:
+        fmt.Printf("Illegal opcode $%02X at $%04X\n", err.Opcode, err.PC)
+        return nil // Continue execution
+    default:
+        return err // Halt on other errors
+    }
+}
+
+cpu := cpu6502.NewBuilder(bus).
+    WithErrorHandler(&CustomErrorHandler{}).
+    Build()
+```
+
+### Performance Monitoring
+
+Track execution statistics and optimize performance:
+
+```go
+// Track execution time
+startCycles := cpu.TotalCycles()
+runProgram(cpu)
+endCycles := cpu.TotalCycles()
+fmt.Printf("Executed %d cycles\n", endCycles - startCycles)
+
+// Monitor instruction cache performance
+hits, misses, hitRate := cpu.InstructionCacheStats()
+fmt.Printf("Cache: %.2f%% hit rate (%d hits, %d misses)\n",
+    hitRate*100, hits, misses)
+
+// Invalidate cache after self-modifying code
+bus.Write(0x8000, 0xEA) // Modify code
+cpu.InvalidateInstructionCache()
+
+// Profile instruction execution
+type InstructionProfiler struct {
+    counts map[string]int
+}
+
+func (p *InstructionProfiler) Profile(cpu *cpu6502.CPU) {
+    instr := cpu.GetCurrentInstruction()
+    if instr != nil {
+        p.counts[instr.Name]++
+    }
 }
 ```
 
