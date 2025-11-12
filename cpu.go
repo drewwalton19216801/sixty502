@@ -292,10 +292,10 @@ func getFuncPtr(f any) uintptr {
 	return reflect.ValueOf(f).Pointer()
 }
 
-// fetchDataIfNeeded - *Use reflect for comparisons*
+// fetchDataIfNeeded - Fetch data if not in implied mode
 func (c *CPU) fetchDataIfNeeded() {
-	// Compare against the method expressions using reflection pointers
-	if getFuncPtr(c.currentInstruction.AddrMode) != getFuncPtr((*CPU).IMP) {
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType != AddrModeIMP {
 		// Immediate mode reads the byte *at* addrAbs (which points to the operand)
 		// Other modes read from the calculated addrAbs.
 		c.fetchedData = c.read(c.addrAbs)
