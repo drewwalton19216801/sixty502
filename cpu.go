@@ -63,68 +63,6 @@ func DefaultConfig() CPUConfig {
 	}
 }
 
-// InstructionCacheEntry represents a cached instruction
-type InstructionCacheEntry struct {
-	opcode      uint8
-	instruction *Instruction
-	valid       bool
-}
-
-// InstructionCache provides fast lookup for recently executed instructions
-type InstructionCache struct {
-	entries [256]InstructionCacheEntry // Direct-mapped cache
-	hits    uint64
-	misses  uint64
-}
-
-// NewInstructionCache creates a new instruction cache
-func NewInstructionCache() *InstructionCache {
-	return &InstructionCache{}
-}
-
-// Lookup attempts to find an instruction in the cache
-func (ic *InstructionCache) Lookup(pc uint16, opcode uint8) (*Instruction, bool) {
-	index := uint8(pc & 0xFF) // Use low byte of PC as cache index
-	entry := &ic.entries[index]
-
-	if entry.valid && entry.opcode == opcode {
-		ic.hits++
-		return entry.instruction, true
-	}
-
-	ic.misses++
-	return nil, false
-}
-
-// Store adds an instruction to the cache
-func (ic *InstructionCache) Store(pc uint16, opcode uint8, instruction *Instruction) {
-	index := uint8(pc & 0xFF)
-	ic.entries[index] = InstructionCacheEntry{
-		opcode:      opcode,
-		instruction: instruction,
-		valid:       true,
-	}
-}
-
-// Invalidate clears the cache (e.g., after self-modifying code)
-func (ic *InstructionCache) Invalidate() {
-	for i := range ic.entries {
-		ic.entries[i].valid = false
-	}
-	// Reset statistics
-	ic.hits = 0
-	ic.misses = 0
-}
-
-// Stats returns cache statistics
-func (ic *InstructionCache) Stats() (hits, misses uint64, hitRate float64) {
-	total := ic.hits + ic.misses
-	if total == 0 {
-		return 0, 0, 0.0
-	}
-	return ic.hits, ic.misses, float64(ic.hits) / float64(total)
-}
-
 // CPU represents a MOS Technology 6502 microprocessor.
 //
 // The CPU executes instructions fetched from memory via the Bus interface.
