@@ -63,9 +63,6 @@ func main() {
     bus := &SimpleBus{}
     cpu := cpu6502.NewCPU(bus)
     
-    // Or create with a specific variant:
-    // cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantRicoh2A03) // NES CPU
-    
     // Load a simple program: LDA #$42, STA $0200, BRK
     bus.Write(0x8000, 0xA9) // LDA immediate
     bus.Write(0x8001, 0x42) // Value $42
@@ -81,12 +78,14 @@ func main() {
     // Reset and run
     cpu.Reset()
     
-    // Execute until BRK
-    for cpu.Cycles > 0 {
+    // Execute until instruction completes
+    for cpu.RemainingCycles() > 0 {
         cpu.Clock()
     }
     
-    fmt.Printf("CPU State: %s\n", cpu.GetState())
+    // Inspect CPU state
+    state := cpu.GetStateSnapshot()
+    fmt.Printf("CPU State: %s\n", state)
     fmt.Printf("Value at $0200: $%02X\n", bus.Read(0x0200))
 }
 ```
@@ -159,12 +158,38 @@ go test -v
 
 ## Advanced Features
 
+### CPU Configuration
+
+Multiple ways to create and configure a CPU instance:
+
+```go
+// Simple creation with defaults (NMOS 6502)
+cpu := cpu6502.NewCPU(bus)
+
+// Specify variant
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantRicoh2A03)
+
+// Full configuration
+config := cpu6502.DefaultConfig()
+config.Variant = cpu6502.VariantCMOS65C02
+config.StrictMode = true  // Halt on illegal opcodes
+config.EnableDecimalMode = false
+cpu := cpu6502.NewCPUWithConfig(bus, config)
+
+// Builder pattern for fluent configuration
+cpu := cpu6502.NewBuilder(bus).
+    WithVariant(cpu6502.VariantCMOS65C02).
+    WithStrictMode().
+    DisableDecimalMode().
+    Build()
+```
+
 ### CPU Variants
 
 The emulator supports multiple 6502 variants with accurate behavior differences:
 
 ```go
-// NMOS 6502 (default) - Original chip with all documented bugs
+// NMOS 6502 - Original chip with all documented bugs
 cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502)
 
 // CMOS 65C02 - Enhanced version with bug fixes
@@ -218,12 +243,27 @@ for addr, line := range disassembly {
 
 ### State Inspection
 
-Comprehensive state inspection methods:
+Comprehensive state inspection with accessor methods:
 
 ```go
-fmt.Println(cpu.GetState())           // Human-readable state
-fmt.Printf("Flags: %s\n", cpu6502.FormatFlags(cpu.P))
+// Get complete state snapshot
+state := cpu.GetStateSnapshot()
+fmt.Println(state)  // Human-readable output
+
+// Access individual state components
+fmt.Printf("PC: $%04X\n", state.PC)
+fmt.Printf("A: $%02X X: $%02X Y: $%02X\n", state.A, state.X, state.Y)
+fmt.Printf("Flags: %s\n", cpu6502.FormatFlags(state.P))
+
+// Use accessor methods
 fmt.Printf("Total cycles: %d\n", cpu.TotalCycles())
+fmt.Printf("Remaining cycles: %d\n", cpu.RemainingCycles())
+fmt.Printf("Current opcode: $%02X\n", cpu.CurrentOpcode())
+
+// Check instruction legality
+if cpu.IsIllegalOpcode(0x02) {
+    fmt.Println("Opcode $02 is illegal")
+}
 ```
 
 ## Performance
