@@ -97,20 +97,33 @@ func main() {
 	// Reset and execute
 	cpu.Reset()
 
+	// Complete the reset sequence (8 cycles)
+	for cpu.RemainingCycles() > 0 {
+		cpu.Clock()
+	}
+
 	fmt.Println("Starting memory-mapped I/O example...")
 	fmt.Println("Program will output 'HELLO' via I/O port at $6000")
 
 	// Execute until BRK or timeout
 	maxCycles := 10000
+	brkHit := false
+
 	for i := 0; i < maxCycles; i++ {
 		if err := cpu.Clock(); err != nil {
 			log.Printf("Error: %v\n", err)
 			break
 		}
 
-		if cpu.CurrentOpcode() == 0x00 && cpu.RemainingCycles() == 0 {
+		// Check if we hit BRK (opcode $00) after fetching it
+		if cpu.RemainingCycles() == 0 && cpu.CurrentOpcode() == 0x00 {
+			brkHit = true
 			break
 		}
+	}
+
+	if !brkHit {
+		fmt.Println("\nTimeout reached without hitting BRK")
 	}
 
 	fmt.Printf("\nProgram completed\n")

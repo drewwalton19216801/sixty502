@@ -50,22 +50,34 @@ func main() {
 	// Reset CPU to start execution
 	cpu.Reset()
 
+	// Complete the reset sequence (8 cycles)
+	for cpu.RemainingCycles() > 0 {
+		cpu.Clock()
+	}
+
 	fmt.Println("Starting CPU execution...")
 	fmt.Printf("Initial state: %s\n", cpu.GetState())
 
 	// Execute until BRK or timeout
 	maxCycles := 1000
+	brkHit := false
+
 	for i := 0; i < maxCycles; i++ {
 		if err := cpu.Clock(); err != nil {
 			log.Printf("Error: %v\n", err)
 			break
 		}
 
-		// Check if we hit BRK (opcode $00)
-		if cpu.CurrentOpcode() == 0x00 && cpu.RemainingCycles() == 0 {
+		// Check if we hit BRK (opcode $00) after fetching it
+		if cpu.RemainingCycles() == 0 && cpu.CurrentOpcode() == 0x00 {
 			fmt.Println("\nBRK instruction reached!")
+			brkHit = true
 			break
 		}
+	}
+
+	if !brkHit {
+		fmt.Println("\nTimeout reached without hitting BRK")
 	}
 
 	// Display final state
