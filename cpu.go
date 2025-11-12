@@ -661,28 +661,6 @@ func (c *CPU) ASL() uint8 {
 	return 0
 }
 
-// --- Branch Instructions ---
-func (c *CPU) branchIf(condition bool) uint8 {
-	cycles := uint8(0)
-	if condition {
-		cycles++
-		if (c.addrRel & 0xFF00) != (c.PC & 0xFF00) {
-			cycles++
-		}
-		c.PC = c.addrRel
-	}
-	return cycles
-}
-
-func (c *CPU) BCC() uint8 { return c.branchIf(!c.getFlag(C)) }
-func (c *CPU) BCS() uint8 { return c.branchIf(c.getFlag(C)) }
-func (c *CPU) BEQ() uint8 { return c.branchIf(c.getFlag(Z)) }
-func (c *CPU) BMI() uint8 { return c.branchIf(c.getFlag(N)) }
-func (c *CPU) BNE() uint8 { return c.branchIf(!c.getFlag(Z)) }
-func (c *CPU) BPL() uint8 { return c.branchIf(!c.getFlag(N)) }
-func (c *CPU) BVC() uint8 { return c.branchIf(!c.getFlag(V)) }
-func (c *CPU) BVS() uint8 { return c.branchIf(c.getFlag(V)) }
-
 func (c *CPU) BRK() uint8 {
 	// Note: PC is already incremented once by Clock() to point after the $00 opcode.
 	// The 6502 pushes PC+2 relative to the opcode address.
