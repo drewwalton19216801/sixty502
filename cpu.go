@@ -1284,24 +1284,10 @@ func FormatFlags(p Flags) string {
 	return string(s)
 }
 
-// Disassemble - *Use reflect for AdrMode comparison*
+// Disassemble - Disassemble instructions in memory range
 func (c *CPU) Disassemble(startAddr, endAddr uint16) map[uint16]string {
 	disassembly := make(map[uint16]string)
 	addr := startAddr
-
-	// Get function pointers for comparison only once
-	impPtr := getFuncPtr((*CPU).IMP)
-	immPtr := getFuncPtr((*CPU).IMM)
-	zp0Ptr := getFuncPtr((*CPU).ZP0)
-	zpxPtr := getFuncPtr((*CPU).ZPX)
-	zpyPtr := getFuncPtr((*CPU).ZPY)
-	relPtr := getFuncPtr((*CPU).REL)
-	absPtr := getFuncPtr((*CPU).ABS)
-	abxPtr := getFuncPtr((*CPU).ABX)
-	abyPtr := getFuncPtr((*CPU).ABY)
-	indPtr := getFuncPtr((*CPU).IND)
-	izxPtr := getFuncPtr((*CPU).IZX)
-	izyPtr := getFuncPtr((*CPU).IZY)
 
 	for addr <= endAddr && addr >= startAddr { // Check for wrap around too
 		lineAddr := addr
@@ -1309,28 +1295,27 @@ func (c *CPU) Disassemble(startAddr, endAddr uint16) map[uint16]string {
 		addr++ // Consume opcode byte
 		instr := c.lookup[opcode]
 		operandStr := ""
-		addrModePtr := getFuncPtr(instr.AddrMode) // Get ptr of the mode for this instruction
 
-		switch addrModePtr { // Compare pointers
-		case impPtr:
+		switch instr.AddrModeType { // Use enum comparison
+		case AddrModeIMP:
 			// No operand bytes
-		case immPtr:
+		case AddrModeIMM:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("#$%02X", val)
-		case zp0Ptr:
+		case AddrModeZP0:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("$%02X", val)
-		case zpxPtr:
+		case AddrModeZPX:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("$%02X,X", val)
-		case zpyPtr:
+		case AddrModeZPY:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("$%02X,Y", val)
-		case relPtr:
+		case AddrModeREL:
 			val := c.read(addr)
 			addr++            // Consume operand byte
 			relTarget := addr // Relative jump target is relative to the *next* instruction
@@ -1340,35 +1325,35 @@ func (c *CPU) Disassemble(startAddr, endAddr uint16) map[uint16]string {
 				relTarget += uint16(val) // Positive offset
 			}
 			operandStr = fmt.Sprintf("$%04X", relTarget)
-		case absPtr:
+		case AddrModeABS:
 			lo := uint16(c.read(addr))
 			addr++
 			hi := uint16(c.read(addr))
 			addr++
 			operandStr = fmt.Sprintf("$%04X", (hi<<8)|lo)
-		case abxPtr:
+		case AddrModeABX:
 			lo := uint16(c.read(addr))
 			addr++
 			hi := uint16(c.read(addr))
 			addr++
 			operandStr = fmt.Sprintf("$%04X,X", (hi<<8)|lo)
-		case abyPtr:
+		case AddrModeABY:
 			lo := uint16(c.read(addr))
 			addr++
 			hi := uint16(c.read(addr))
 			addr++
 			operandStr = fmt.Sprintf("$%04X,Y", (hi<<8)|lo)
-		case indPtr:
+		case AddrModeIND:
 			lo := uint16(c.read(addr))
 			addr++
 			hi := uint16(c.read(addr))
 			addr++
 			operandStr = fmt.Sprintf("($%04X)", (hi<<8)|lo)
-		case izxPtr:
+		case AddrModeIZX:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("($%02X,X)", val)
-		case izyPtr:
+		case AddrModeIZY:
 			val := c.read(addr)
 			addr++
 			operandStr = fmt.Sprintf("($%02X),Y", val)
