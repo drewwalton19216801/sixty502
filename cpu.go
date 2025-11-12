@@ -1,3 +1,28 @@
+// Package cpu6502 provides a cycle-accurate emulator for the MOS Technology 6502
+// microprocessor and its variants.
+//
+// The 6502 is an 8-bit microprocessor that was widely used in home computers
+// and game consoles during the 1970s and 1980s, including the Apple II,
+// Commodore 64, and Atari 2600.
+//
+// This implementation supports:
+//   - All 151 official 6502 instructions
+//   - Multiple CPU variants (NMOS 6502, CMOS 65C02, Ricoh 2A03)
+//   - Cycle-accurate timing including page boundary crossing
+//   - Decimal mode (BCD) arithmetic
+//   - Interrupt handling (IRQ, NMI, BRK)
+//   - Many unofficial/illegal opcodes
+//
+// Basic usage:
+//
+//	bus := &SimpleBus{}
+//	cpu := cpu6502.NewCPU(bus)
+//	cpu.Reset()
+//	for cpu.RemainingCycles() > 0 {
+//	    if err := cpu.Clock(); err != nil {
+//	        log.Fatal(err)
+//	    }
+//	}
 package cpu6502
 
 import (
@@ -140,9 +165,30 @@ func (v CPUVariant) HasIndirectJMPBug() bool {
 	}
 }
 
-// Bus interface (remains the same)
+// Bus defines the interface for memory access.
+//
+// Implementations of this interface provide the CPU with access to
+// memory and memory-mapped I/O. The interface is intentionally simple
+// to allow for flexible implementations.
+//
+// Example implementation:
+//
+//	type SimpleBus struct {
+//	    ram [65536]uint8
+//	}
+//
+//	func (b *SimpleBus) Read(addr uint16) uint8 {
+//	    return b.ram[addr]
+//	}
+//
+//	func (b *SimpleBus) Write(addr uint16, data uint8) {
+//	    b.ram[addr] = data
+//	}
 type Bus interface {
+	// Read returns the byte at the specified address.
 	Read(addr uint16) uint8
+
+	// Write stores a byte at the specified address.
 	Write(addr uint16, data uint8)
 }
 
@@ -179,7 +225,17 @@ func DefaultConfig() CPUConfig {
 	}
 }
 
-// Flags type (remains the same)
+// Flags represents the processor status register.
+//
+// The 6502 has 8 status flags that indicate the result of operations:
+//   - N (Negative): Set if result is negative (bit 7 = 1)
+//   - V (Overflow): Set if signed overflow occurred
+//   - U (Unused): Always set to 1
+//   - B (Break): Set when BRK instruction executed
+//   - D (Decimal): Enables BCD arithmetic mode
+//   - I (Interrupt Disable): When set, IRQ interrupts are ignored
+//   - Z (Zero): Set if result is zero
+//   - C (Carry): Set if unsigned overflow/borrow occurred
 type Flags uint8
 
 const (
@@ -255,7 +311,28 @@ func (ic *InstructionCache) Stats() (hits, misses uint64, hitRate float64) {
 	return ic.hits, ic.misses, float64(ic.hits) / float64(total)
 }
 
-// CPU struct
+// CPU represents a MOS Technology 6502 microprocessor.
+//
+// The CPU executes instructions fetched from memory via the Bus interface.
+// It maintains internal registers (A, X, Y, SP, PC, P) and provides
+// cycle-accurate emulation of the 6502 instruction set.
+//
+// The CPU operates in a fetch-decode-execute cycle:
+//  1. Fetch opcode from memory at PC
+//  2. Decode opcode using lookup table
+//  3. Execute addressing mode calculation
+//  4. Execute instruction operation
+//  5. Update cycle counter
+//
+// Example:
+//
+//	cpu := cpu6502.NewCPU(bus)
+//	cpu.Reset()
+//	for {
+//	    if err := cpu.Clock(); err != nil {
+//	        break
+//	    }
+//	}
 type CPU struct {
 	// Registers (public for direct access)
 	A  uint8  // Accumulator
@@ -313,7 +390,21 @@ type Instruction struct {
 	PageCrossPenalty bool             // Whether to add +1 cycle on page boundary cross
 }
 
-// NewCPU creates a new CPU with default configuration
+// NewCPU creates a new 6502 CPU instance with default configuration.
+//
+// The CPU is initialized with:
+//   - All registers cleared
+//   - Stack pointer at $FD
+//   - Status flags: U and I set
+//   - NMOS 6502 variant
+//   - Logging error handler
+//
+// The CPU must be reset before execution:
+//
+//	cpu := NewCPU(bus)
+//	cpu.Reset() // Loads PC from reset vector at $FFFC/FD
+//
+// For custom configuration, use NewCPUWithConfig instead.
 func NewCPU(bus Bus) *CPU {
 	return NewCPUWithConfig(bus, DefaultConfig())
 }
@@ -1431,7 +1522,20 @@ func (c *CPU) buildLookupTable() {
 
 // --- Core Execution ---
 
-// Reset
+// Reset initializes the CPU to its power-on state.
+//
+// This method:
+//   - Clears all registers (A, X, Y)
+//   - Sets stack pointer to $FD
+//   - Sets status flags to U | I
+//   - Loads PC from reset vector at $FFFC/FD
+//   - Takes 8 cycles to complete
+//
+// The reset vector should be set in memory before calling Reset:
+//
+//	bus.Write(0xFFFC, 0x00) // Low byte
+//	bus.Write(0xFFFD, 0x80) // High byte -> PC = $8000
+//	cpu.Reset()
 func (c *CPU) Reset() {
 	lo := uint16(c.read(0xFFFC))
 	hi := uint16(c.read(0xFFFD))
@@ -1565,8 +1669,25 @@ func (c *CPU) handleIRQ() error {
 	return nil
 }
 
-// Clock executes one clock cycle of the CPU
-// Returns an error if an unrecoverable error occurs
+// Clock executes one clock cycle of the CPU.
+//
+// This method should be called repeatedly to execute instructions.
+// Each instruction takes multiple cycles to complete. The CPU tracks
+// remaining cycles internally and fetches the next instruction when
+// the current one completes.
+//
+// Returns an error if an unrecoverable error occurs (e.g., illegal
+// opcode in strict mode). The error can be handled or ignored based
+// on the configured error handler.
+//
+// Example:
+//
+//	for {
+//	    if err := cpu.Clock(); err != nil {
+//	        log.Printf("CPU error: %v", err)
+//	        break
+//	    }
+//	}
 func (c *CPU) Clock() error {
 	if c.cycles == 0 {
 		// Check for interrupts BEFORE fetching next instruction
