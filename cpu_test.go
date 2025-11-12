@@ -2316,8 +2316,8 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		}
 
 		// 5. Check cycle count
-		if cpu.RemainingCycles() != 8 {
-			t.Errorf("NMI (I=%v) failed: Expected cpu.RemainingCycles()=8, got %d", iFlag, cpu.RemainingCycles())
+		if cpu.RemainingCycles() != 7 {
+			t.Errorf("NMI (I=%v) failed: Expected cpu.RemainingCycles()=7, got %d", iFlag, cpu.RemainingCycles())
 		}
 	}
 
