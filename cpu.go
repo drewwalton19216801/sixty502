@@ -146,6 +146,31 @@ type Bus interface {
 	Write(addr uint16, data uint8)
 }
 
+// CPUConfig holds configuration options for CPU creation
+type CPUConfig struct {
+	// Variant specifies the CPU variant (NMOS, CMOS, Ricoh)
+	Variant CPUVariant
+
+	// ErrorHandler defines how errors are handled
+	ErrorHandler ErrorHandler
+
+	// StrictMode halts execution on illegal opcodes
+	StrictMode bool
+
+	// EnableDecimalMode allows disabling decimal mode even on variants that support it
+	EnableDecimalMode bool
+}
+
+// DefaultConfig returns a configuration with sensible defaults
+func DefaultConfig() CPUConfig {
+	return CPUConfig{
+		Variant:           VariantNMOS6502,
+		ErrorHandler:      &LoggingErrorHandler{Logger: log.Default()},
+		StrictMode:        false,
+		EnableDecimalMode: true,
+	}
+}
+
 // Flags type (remains the same)
 type Flags uint8
 
@@ -214,40 +239,100 @@ type Instruction struct {
 	Illegal      bool             // Whether this is an official or unofficial/illegal opcode
 }
 
-// NewCPU creates a new CPU with default NMOS 6502 variant and logging error handler
+// NewCPU creates a new CPU with default configuration
 func NewCPU(bus Bus) *CPU {
-	return NewCPUWithVariant(bus, VariantNMOS6502)
+	return NewCPUWithConfig(bus, DefaultConfig())
 }
 
-// NewCPUWithVariant creates a new CPU with specified variant and default logging error handler
+// NewCPUWithVariant creates a new CPU with specified variant
 func NewCPUWithVariant(bus Bus, variant CPUVariant) *CPU {
-	c := &CPU{
-		bus:          bus,
-		P:            U | I,
-		SP:           0xFD,
-		variant:      variant,
-		errorHandler: &LoggingErrorHandler{Logger: log.Default()},
-	}
-	c.buildLookupTable()
-	return c
+	config := DefaultConfig()
+	config.Variant = variant
+	return NewCPUWithConfig(bus, config)
 }
 
 // NewCPUWithErrorHandler creates a new CPU with default NMOS 6502 variant and custom error handler
 func NewCPUWithErrorHandler(bus Bus, handler ErrorHandler) *CPU {
-	return NewCPUWithVariantAndErrorHandler(bus, VariantNMOS6502, handler)
+	config := DefaultConfig()
+	config.ErrorHandler = handler
+	return NewCPUWithConfig(bus, config)
 }
 
 // NewCPUWithVariantAndErrorHandler creates a new CPU with specified variant and error handler
 func NewCPUWithVariantAndErrorHandler(bus Bus, variant CPUVariant, handler ErrorHandler) *CPU {
+	config := DefaultConfig()
+	config.Variant = variant
+	config.ErrorHandler = handler
+	return NewCPUWithConfig(bus, config)
+}
+
+// NewCPUWithConfig creates a new CPU with full configuration
+func NewCPUWithConfig(bus Bus, config CPUConfig) *CPU {
+	// Apply strict mode to error handler if requested
+	errorHandler := config.ErrorHandler
+	if config.StrictMode {
+		errorHandler = &StrictErrorHandler{}
+	}
+
 	c := &CPU{
 		bus:          bus,
 		P:            U | I,
 		SP:           0xFD,
-		variant:      variant,
-		errorHandler: handler,
+		variant:      config.Variant,
+		errorHandler: errorHandler,
 	}
+
 	c.buildLookupTable()
+
+	// Apply decimal mode configuration
+	if !config.EnableDecimalMode {
+		c.P &^= D // Clear decimal flag
+	}
+
 	return c
+}
+
+// CPUBuilder provides a fluent interface for CPU configuration
+type CPUBuilder struct {
+	bus    Bus
+	config CPUConfig
+}
+
+// NewBuilder creates a new CPU builder
+func NewBuilder(bus Bus) *CPUBuilder {
+	return &CPUBuilder{
+		bus:    bus,
+		config: DefaultConfig(),
+	}
+}
+
+// WithVariant sets the CPU variant
+func (b *CPUBuilder) WithVariant(variant CPUVariant) *CPUBuilder {
+	b.config.Variant = variant
+	return b
+}
+
+// WithStrictMode enables strict mode
+func (b *CPUBuilder) WithStrictMode() *CPUBuilder {
+	b.config.StrictMode = true
+	return b
+}
+
+// WithErrorHandler sets a custom error handler
+func (b *CPUBuilder) WithErrorHandler(handler ErrorHandler) *CPUBuilder {
+	b.config.ErrorHandler = handler
+	return b
+}
+
+// DisableDecimalMode disables decimal mode
+func (b *CPUBuilder) DisableDecimalMode() *CPUBuilder {
+	b.config.EnableDecimalMode = false
+	return b
+}
+
+// Build creates the configured CPU
+func (b *CPUBuilder) Build() *CPU {
+	return NewCPUWithConfig(b.bus, b.config)
 }
 
 // Variant returns the CPU variant
@@ -1366,6 +1451,56 @@ func (c *CPU) LookupInstruction(opcode uint8) Instruction {
 // IsIllegalOpcode returns true if the given opcode is illegal/unofficial
 func (c *CPU) IsIllegalOpcode(opcode uint8) bool {
 	return c.lookup[opcode].Illegal
+}
+
+// --- State Inspection ---
+
+// State represents a snapshot of CPU state
+type State struct {
+	A               uint8
+	X               uint8
+	Y               uint8
+	SP              uint8
+	PC              uint16
+	P               Flags
+	Cycles          uint8
+	TotalCycles     uint64
+	Opcode          uint8
+	Instruction     string
+	InInterrupt     bool
+	InterruptVector uint16
+}
+
+// GetStateSnapshot returns a snapshot of the current CPU state
+func (c *CPU) GetStateSnapshot() State {
+	instrName := "???"
+	if c.currentInstruction != nil {
+		instrName = c.currentInstruction.Name
+	}
+
+	return State{
+		A:               c.A,
+		X:               c.X,
+		Y:               c.Y,
+		SP:              c.SP,
+		PC:              c.PC,
+		P:               c.P,
+		Cycles:          c.cycles,
+		TotalCycles:     c.totalCycles,
+		Opcode:          c.opcode,
+		Instruction:     instrName,
+		InInterrupt:     c.inInterrupt,
+		InterruptVector: c.interruptVector,
+	}
+}
+
+// String returns a human-readable representation of the state
+func (s State) String() string {
+	return fmt.Sprintf(
+		"PC:%04X A:%02X X:%02X Y:%02X P:%02X[%s] SP:%02X CYC:%d (%s $%02X)",
+		s.PC, s.A, s.X, s.Y, uint8(s.P), FormatFlags(s.P),
+		s.SP, s.TotalCycles, s.Instruction, s.Opcode,
+	)
 }
 
 // --- Debug Helpers ---
