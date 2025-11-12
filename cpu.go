@@ -395,11 +395,11 @@ func (c *CPU) AND() uint8 {
 	return 1
 }
 
-// ASL - *Use reflect for comparison*
+// ASL - Arithmetic Shift Left
 func (c *CPU) ASL() uint8 {
 	var temp uint16
-	// Compare against the method expression using reflection pointers
-	if getFuncPtr(c.currentInstruction.AddrMode) == getFuncPtr((*CPU).IMP) {
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType == AddrModeIMP {
 		temp = uint16(c.A) << 1
 		c.setFlag(C, (temp&0xFF00) > 0)
 		c.A = uint8(temp & 0x00FF)
@@ -572,11 +572,11 @@ func (c *CPU) LDY() uint8 {
 	return 1
 }
 
-// LSR - *Use reflect for comparison*
+// LSR - Logical Shift Right
 func (c *CPU) LSR() uint8 {
 	var temp uint8
-	// Compare against the method expression using reflection pointers
-	if getFuncPtr(c.currentInstruction.AddrMode) == getFuncPtr((*CPU).IMP) {
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType == AddrModeIMP {
 		c.setFlag(C, (c.A&0x01) > 0)
 		c.A >>= 1
 		c.setZNFlags(c.A)
@@ -631,7 +631,7 @@ func (c *CPU) PLP() uint8 {
 	return 0
 }
 
-// ROL - *Use reflect for comparison*
+// ROL - Rotate Left
 func (c *CPU) ROL() uint8 {
 	var temp uint16
 	var carryBit uint16 = 0
@@ -639,8 +639,8 @@ func (c *CPU) ROL() uint8 {
 		carryBit = 1
 	}
 
-	// Compare against the method expression using reflection pointers
-	if getFuncPtr(c.currentInstruction.AddrMode) == getFuncPtr((*CPU).IMP) {
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType == AddrModeIMP {
 		temp = (uint16(c.A) << 1) | carryBit
 		c.setFlag(C, (temp&0xFF00) > 0)
 		c.A = uint8(temp & 0x00FF)
@@ -656,7 +656,7 @@ func (c *CPU) ROL() uint8 {
 	return 0
 }
 
-// ROR - *Use reflect for comparison*
+// ROR - Rotate Right
 func (c *CPU) ROR() uint8 {
 	var temp uint8
 	var carryBit uint8 = 0
@@ -664,8 +664,8 @@ func (c *CPU) ROR() uint8 {
 		carryBit = 0x80
 	}
 
-	// Compare against the method expression using reflection pointers
-	if getFuncPtr(c.currentInstruction.AddrMode) == getFuncPtr((*CPU).IMP) {
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType == AddrModeIMP {
 		newCarry := (c.A & 0x01) > 0
 		temp = (c.A >> 1) | carryBit
 		c.setFlag(C, newCarry)
