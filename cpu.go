@@ -641,26 +641,6 @@ func (c *CPU) adcDecimal(carry uint16) uint8 {
 	return 0
 }
 
-// ASL - Arithmetic Shift Left
-func (c *CPU) ASL() uint8 {
-	var temp uint16
-	// Use enum comparison instead of reflection
-	if c.currentInstruction.AddrModeType == AddrModeIMP {
-		temp = uint16(c.A) << 1
-		c.setFlag(C, (temp&0xFF00) > 0)
-		c.A = uint8(temp & 0x00FF)
-		c.setZNFlags(c.A)
-	} else {
-		c.fetchDataIfNeeded() // Need data before modifying
-		temp = uint16(c.fetchedData) << 1
-		c.setFlag(C, (temp&0xFF00) > 0)
-		result := uint8(temp & 0x00FF)
-		c.write(c.addrAbs, result)
-		c.setZNFlags(result)
-	}
-	return 0
-}
-
 func (c *CPU) BRK() uint8 {
 	// Note: PC is already incremented once by Clock() to point after the $00 opcode.
 	// The 6502 pushes PC+2 relative to the opcode address.
@@ -758,78 +738,9 @@ func (c *CPU) JSR() uint8 {
 	return 0
 }
 
-// LSR - Logical Shift Right
-func (c *CPU) LSR() uint8 {
-	var temp uint8
-	// Use enum comparison instead of reflection
-	if c.currentInstruction.AddrModeType == AddrModeIMP {
-		c.setFlag(C, (c.A&0x01) > 0)
-		c.A >>= 1
-		c.setZNFlags(c.A)
-	} else {
-		c.fetchDataIfNeeded() // Need data before modifying
-		c.setFlag(C, (c.fetchedData&0x01) > 0)
-		temp = c.fetchedData >> 1
-		c.write(c.addrAbs, temp)
-		c.setZNFlags(temp)
-	}
-	return 0
-}
-
 // NOP - No Operation
 func (c *CPU) NOP() uint8 {
 	// Page cross handling is now done via PageCrossPenalty field in lookup table
-	return 0
-}
-
-// ROL - Rotate Left
-func (c *CPU) ROL() uint8 {
-	var temp uint16
-	var carryBit uint16 = 0
-	if c.getFlag(C) {
-		carryBit = 1
-	}
-
-	// Use enum comparison instead of reflection
-	if c.currentInstruction.AddrModeType == AddrModeIMP {
-		temp = (uint16(c.A) << 1) | carryBit
-		c.setFlag(C, (temp&0xFF00) > 0)
-		c.A = uint8(temp & 0x00FF)
-		c.setZNFlags(c.A)
-	} else {
-		c.fetchDataIfNeeded() // Need data before modifying
-		temp = (uint16(c.fetchedData) << 1) | carryBit
-		c.setFlag(C, (temp&0xFF00) > 0)
-		result := uint8(temp & 0x00FF)
-		c.write(c.addrAbs, result)
-		c.setZNFlags(result)
-	}
-	return 0
-}
-
-// ROR - Rotate Right
-func (c *CPU) ROR() uint8 {
-	var temp uint8
-	var carryBit uint8 = 0
-	if c.getFlag(C) {
-		carryBit = 0x80
-	}
-
-	// Use enum comparison instead of reflection
-	if c.currentInstruction.AddrModeType == AddrModeIMP {
-		newCarry := (c.A & 0x01) > 0
-		temp = (c.A >> 1) | carryBit
-		c.setFlag(C, newCarry)
-		c.A = temp
-		c.setZNFlags(c.A)
-	} else {
-		c.fetchDataIfNeeded() // Need data before modifying
-		newCarry := (c.fetchedData & 0x01) > 0
-		temp = (c.fetchedData >> 1) | carryBit
-		c.write(c.addrAbs, temp)
-		c.setFlag(C, newCarry)
-		c.setZNFlags(temp)
-	}
 	return 0
 }
 
