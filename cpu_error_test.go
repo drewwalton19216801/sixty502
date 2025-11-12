@@ -22,7 +22,7 @@ func TestErrorHandling_IllegalOpcode(t *testing.T) {
 		bus.Write(0x8001, 0x00) // BRK after
 
 		cpu.PC = 0x8000
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		// Execute - should return error
 		err := cpu.Clock()
@@ -67,7 +67,7 @@ func TestErrorHandling_IllegalOpcode(t *testing.T) {
 		bus.Write(0x8002, 0x00) // BRK
 
 		cpu.PC = 0x8000
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		// Execute illegal opcode - should NOT return error (logging mode)
 		err := cpu.Clock()
@@ -81,7 +81,7 @@ func TestErrorHandling_IllegalOpcode(t *testing.T) {
 		}
 
 		// Should be able to continue execution
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		err = cpu.Clock()
 		if err != nil {
 			t.Errorf("Expected to continue execution after illegal opcode, got error: %v", err)
@@ -101,7 +101,7 @@ func TestErrorHandling_IllegalOpcode(t *testing.T) {
 		bus.Write(0x8000, illegalOpcode)
 
 		cpu.PC = 0x8000
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		// Execute - should NOT return error (default is logging mode)
 		err := cpu.Clock()
@@ -131,7 +131,7 @@ func TestErrorHandling_MultipleErrors(t *testing.T) {
 	bus.Write(0x8002, 0x00) // BRK
 
 	cpu.PC = 0x8000
-	cpu.Cycles = 0
+	cpu.SetCycles(0)
 
 	// Execute first illegal opcode
 	err := cpu.Clock()
@@ -148,7 +148,7 @@ func TestErrorHandling_MultipleErrors(t *testing.T) {
 	}
 
 	// Execute second illegal opcode
-	cpu.Cycles = 0
+	cpu.SetCycles(0)
 	err = cpu.Clock()
 	if err != nil {
 		t.Errorf("Expected no error in logging mode, got: %v", err)

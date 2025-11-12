@@ -131,7 +131,7 @@ func TestIndirectJMPBug(t *testing.T) {
 			bus.Write(indirectAddr+1, 0xEE)            // $1100 = $EE (correct location)
 
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, 5)
 
@@ -178,7 +178,7 @@ func TestDecimalModeSupport(t *testing.T) {
 			baseAddr := uint16(0x8000)
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, 2)
 
@@ -208,7 +208,7 @@ func TestDecimalModeSupport(t *testing.T) {
 			baseAddr := uint16(0x8000)
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, 2)
 
@@ -263,7 +263,7 @@ func TestDecimalModeADCEdgeCases(t *testing.T) {
 				baseAddr := uint16(0x8000)
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 
 				runCycles(cpu, 2)
 
@@ -315,7 +315,7 @@ func TestDecimalModeSBCEdgeCases(t *testing.T) {
 				baseAddr := uint16(0x8000)
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 
 				runCycles(cpu, 2)
 
@@ -352,7 +352,7 @@ func TestVariantNVFlagsInDecimalMode(t *testing.T) {
 			baseAddr := uint16(0x8000)
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, 2)
 
@@ -380,7 +380,7 @@ func TestVariantNVFlagsInDecimalMode(t *testing.T) {
 			baseAddr := uint16(0x8000)
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, 2)
 
