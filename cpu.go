@@ -6,6 +6,36 @@ import (
 	"reflect" // Import reflect package
 )
 
+// AddrModeType represents the addressing mode of an instruction
+type AddrModeType uint8
+
+const (
+	AddrModeIMP AddrModeType = iota // Implied
+	AddrModeIMM                     // Immediate
+	AddrModeZP0                     // Zero Page
+	AddrModeZPX                     // Zero Page, X
+	AddrModeZPY                     // Zero Page, Y
+	AddrModeREL                     // Relative
+	AddrModeABS                     // Absolute
+	AddrModeABX                     // Absolute, X
+	AddrModeABY                     // Absolute, Y
+	AddrModeIND                     // Indirect
+	AddrModeIZX                     // Indexed Indirect
+	AddrModeIZY                     // Indirect Indexed
+)
+
+// String returns the addressing mode name for debugging
+func (a AddrModeType) String() string {
+	names := []string{
+		"IMP", "IMM", "ZP0", "ZPX", "ZPY", "REL",
+		"ABS", "ABX", "ABY", "IND", "IZX", "IZY",
+	}
+	if int(a) < len(names) {
+		return names[a]
+	}
+	return "UNKNOWN"
+}
+
 // Bus interface (remains the same)
 type Bus interface {
 	Read(addr uint16) uint8
