@@ -95,6 +95,7 @@ func (c *CPU) buildLookupTable() {
 	PLP := (*CPU).PLP
 	ROL := (*CPU).ROL
 	ROR := (*CPU).ROR
+	ROR_RevA := (*CPU).ROR_RevA
 	RTI := (*CPU).RTI
 	RTS := (*CPU).RTS
 	SBC := (*CPU).SBC
@@ -222,11 +223,18 @@ func (c *CPU) buildLookupTable() {
 	c.lookup[0x2E] = Instruction{Name: "ROL", Operate: ROL, AddrMode: ABS, AddrModeType: AddrModeABS, Cycles: 6, Length: 3, PageCrossPenalty: false}
 	c.lookup[0x3E] = Instruction{Name: "ROL", Operate: ROL, AddrMode: ABX, AddrModeType: AddrModeABX, Cycles: 7, Length: 3, PageCrossPenalty: false}
 
-	c.lookup[0x6A] = Instruction{Name: "ROR", Operate: ROR, AddrMode: IMP, AddrModeType: AddrModeIMP, Cycles: 2, Length: 1, PageCrossPenalty: false}
-	c.lookup[0x66] = Instruction{Name: "ROR", Operate: ROR, AddrMode: ZP0, AddrModeType: AddrModeZP0, Cycles: 5, Length: 2, PageCrossPenalty: false}
-	c.lookup[0x76] = Instruction{Name: "ROR", Operate: ROR, AddrMode: ZPX, AddrModeType: AddrModeZPX, Cycles: 6, Length: 2, PageCrossPenalty: false}
-	c.lookup[0x6E] = Instruction{Name: "ROR", Operate: ROR, AddrMode: ABS, AddrModeType: AddrModeABS, Cycles: 6, Length: 3, PageCrossPenalty: false}
-	c.lookup[0x7E] = Instruction{Name: "ROR", Operate: ROR, AddrMode: ABX, AddrModeType: AddrModeABX, Cycles: 7, Length: 3, PageCrossPenalty: false}
+	// Choose ROR implementation based on variant
+	// Rev A NMOS 6502 has a hardware quirk where ROR behaves like ASL
+	rorImpl := ROR
+	if c.variant.HasRORQuirk() {
+		rorImpl = ROR_RevA
+	}
+
+	c.lookup[0x6A] = Instruction{Name: "ROR", Operate: rorImpl, AddrMode: IMP, AddrModeType: AddrModeIMP, Cycles: 2, Length: 1, PageCrossPenalty: false}
+	c.lookup[0x66] = Instruction{Name: "ROR", Operate: rorImpl, AddrMode: ZP0, AddrModeType: AddrModeZP0, Cycles: 5, Length: 2, PageCrossPenalty: false}
+	c.lookup[0x76] = Instruction{Name: "ROR", Operate: rorImpl, AddrMode: ZPX, AddrModeType: AddrModeZPX, Cycles: 6, Length: 2, PageCrossPenalty: false}
+	c.lookup[0x6E] = Instruction{Name: "ROR", Operate: rorImpl, AddrMode: ABS, AddrModeType: AddrModeABS, Cycles: 6, Length: 3, PageCrossPenalty: false}
+	c.lookup[0x7E] = Instruction{Name: "ROR", Operate: rorImpl, AddrMode: ABX, AddrModeType: AddrModeABX, Cycles: 7, Length: 3, PageCrossPenalty: false}
 
 	// Logical instructions - ADD page cross penalty for indexed modes
 	c.lookup[0x29] = Instruction{Name: "AND", Operate: AND, AddrMode: IMM, AddrModeType: AddrModeIMM, Cycles: 2, Length: 2, PageCrossPenalty: false}

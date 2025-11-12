@@ -4,18 +4,19 @@ This document details the differences between the various 6502 CPU variants supp
 
 ## Variant Comparison Table
 
-| Feature | NMOS 6502 | CMOS 65C02 | Ricoh 2A03 | Ricoh 2A07 |
-|---------|-----------|------------|------------|------------|
-| **Year Released** | 1975 | 1982 | 1983 | 1983 |
-| **Decimal Mode** | ✓ | ✓ | ✗ | ✗ |
-| **Indirect JMP Bug** | ✓ | ✗ | ✓ | ✓ |
-| **N/V Flags in BCD** | Undefined | Defined | N/A | N/A |
-| **Additional Instructions** | ✗ | ✓ | ✗ | ✗ |
-| **Power Consumption** | Higher | Lower | Higher | Higher |
+| Feature | NMOS 6502 | NMOS 6502 Rev A | CMOS 65C02 | Ricoh 2A03 | Ricoh 2A07 |
+|---------|-----------|-----------------|------------|------------|------------|
+| **Year Released** | 1975 | 1975 | 1982 | 1983 | 1983 |
+| **Decimal Mode** | ✓ | ✓ | ✓ | ✗ | ✗ |
+| **ROR Instruction** | ✓ | ✗ (ASL-like) | ✓ | ✓ | ✓ |
+| **Indirect JMP Bug** | ✓ | ✓ | ✗ | ✓ | ✓ |
+| **N/V Flags in BCD** | Undefined | Undefined | Defined | N/A | N/A |
+| **Additional Instructions** | ✗ | ✗ | ✓ | ✗ | ✗ |
+| **Power Consumption** | Higher | Higher | Lower | Higher | Higher |
 
 ## System Compatibility
 
-### NMOS 6502 (Original)
+### NMOS 6502 (Rev B and Later)
 
 **Used in:**
 
@@ -30,6 +31,7 @@ This document details the differences between the various 6502 CPU variants supp
 - Full decimal mode support with NMOS-specific behavior
 - N and V flags have undefined values after BCD operations
 - Has the indirect JMP page boundary bug at $xxFF
+- ROR instruction works correctly
 - 151 official opcodes
 - Higher power consumption
 
@@ -37,6 +39,31 @@ This document details the differences between the various 6502 CPU variants supp
 
 ```go
 cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502)
+```
+
+### NMOS 6502 Rev A (Early Revision)
+
+**Used in:**
+
+- Very early 6502-based systems (1975)
+- Rare in production systems
+
+**Characteristics:**
+
+- Full decimal mode support with NMOS-specific behavior
+- N and V flags have undefined values after BCD operations
+- Has the indirect JMP page boundary bug at $xxFF
+- **ROR instruction hardware quirk**: ROR behaves like ASL
+  - Shifts left instead of right
+  - Shifts zero in instead of carry
+  - Does NOT update the carry flag
+- 151 official opcodes (but ROR is broken)
+- Higher power consumption
+
+**Example:**
+
+```go
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502RevA)
 ```
 
 ### CMOS 65C02 (Enhanced)
@@ -167,6 +194,54 @@ bus.Write(0x1100, 0x90)
 // JMP ($10FF) correctly jumps to $9000
 ```
 
+### ROR Instruction Quirk (Rev A Only)
+
+#### NMOS 6502 Rev A
+
+The original Rev A of the NMOS 6502 had a hardware design flaw where the ROR (Rotate Right) instruction was not properly implemented. Instead of rotating right, it behaves like ASL (Arithmetic Shift Left):
+
+```go
+// Rev A behavior: ROR acts like ASL but doesn't update carry
+cpu.A = 0x42  // 01000010
+cpu.P |= cpu6502.C  // Set carry flag
+
+// ROR A on Rev A:
+// Expected (correct ROR): 0x42 >> 1 | 0x80 = 0xA1, C=0
+// Actual (Rev A quirk):   0x42 << 1 = 0x84, C unchanged (still 1)
+
+// After ROR A:
+// cpu.A = 0x84  (shifted left, not right!)
+// C flag = 1    (unchanged, not updated!)
+```
+
+**Quirk Characteristics:**
+
+1. Shifts left instead of right (like ASL)
+2. Shifts zero in instead of carry (like ASL)
+3. Does NOT update the carry flag (unlike ASL)
+4. Z and N flags are updated correctly based on result
+
+#### NMOS 6502 Rev B and Later
+
+The bug was fixed in Rev B:
+
+```go
+// Rev B+ behavior: ROR works correctly
+cpu.A = 0x42  // 01000010
+cpu.P |= cpu6502.C  // Set carry flag
+
+// ROR A on Rev B+:
+// Result: 0x42 >> 1 | 0x80 = 0xA1, C=0
+
+// After ROR A:
+// cpu.A = 0xA1  (correctly rotated right)
+// C flag = 0    (correctly set from bit 0)
+```
+
+#### All Other Variants
+
+CMOS 65C02 and Ricoh variants never had this bug - ROR works correctly.
+
 ### Checking Variant Capabilities
 
 ```go
@@ -178,6 +253,11 @@ if cpu.Variant().SupportsDecimalMode() {
 // Check for indirect JMP bug
 if cpu.Variant().HasIndirectJMPBug() {
     fmt.Println("Has page boundary bug in JMP ($xxFF)")
+}
+
+// Check for ROR quirk
+if cpu.Variant().HasRORQuirk() {
+    fmt.Println("ROR instruction behaves like ASL (Rev A quirk)")
 }
 
 // Get variant name

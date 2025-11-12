@@ -120,3 +120,33 @@ func (c *CPU) ROR() uint8 {
 	}
 	return 0
 }
+
+// ROR_RevA - Rotate Right (Rev A Hardware Quirk Version)
+// The original Rev A NMOS 6502 didn't have proper ROR circuitry.
+// Instead of rotating right, it behaves like ASL (Arithmetic Shift Left):
+//   - Shifts left instead of right (like ASL)
+//   - Shifts a zero in instead of C (like ASL)
+//   - Doesn't update C (unlike ASL, the carry flag is not modified)
+//
+// This quirk was fixed in Rev B and later revisions.
+// Flags affected: Z, N (C is NOT affected, unlike normal ASL)
+func (c *CPU) ROR_RevA() uint8 {
+	var temp uint16
+	// Use enum comparison instead of reflection
+	if c.currentInstruction.AddrModeType == AddrModeIMP {
+		// Operate on accumulator - behaves like ASL but doesn't set C
+		temp = uint16(c.A) << 1
+		// Quirk: Carry flag is NOT updated (unlike ASL)
+		c.A = uint8(temp & 0x00FF)
+		c.setZNFlags(c.A)
+	} else {
+		// Operate on memory - behaves like ASL but doesn't set C
+		c.fetchDataIfNeeded() // Need data before modifying
+		temp = uint16(c.fetchedData) << 1
+		// Quirk: Carry flag is NOT updated (unlike ASL)
+		result := uint8(temp & 0x00FF)
+		c.write(c.addrAbs, result)
+		c.setZNFlags(result)
+	}
+	return 0
+}

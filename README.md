@@ -6,7 +6,7 @@ A comprehensive and accurate 6502 microprocessor emulator written in Go. This li
 
 ### Core CPU Implementation
 
-- **Multiple CPU Variants**: Support for NMOS 6502, CMOS 65C02, and Ricoh 2A03/2A07 (NES) variants
+- **Multiple CPU Variants**: Support for NMOS 6502 (Rev A and Rev B+), CMOS 65C02, and Ricoh 2A03/2A07 (NES) variants
 - **Complete 6502 Instruction Set**: All 151 official instructions implemented
 - **All Addressing Modes**: Immediate, Zero Page, Absolute, Indexed, Indirect, and Relative addressing
 - **Unofficial Opcodes**: Support for many undocumented/illegal 6502 instructions
@@ -14,7 +14,9 @@ A comprehensive and accurate 6502 microprocessor emulator written in Go. This li
 - **Status Flags**: Full implementation of all processor status flags (N, V, U, B, D, I, Z, C)
 - **Variant-Specific Decimal Mode**: Accurate BCD arithmetic with variant-specific behavior
 - **Interrupt Handling**: IRQ, NMI, and BRK interrupt support with proper vector handling
-- **Hardware Bug Emulation**: Accurate emulation of the indirect JMP page boundary bug on NMOS variants
+- **Hardware Bug Emulation**: Accurate emulation of historical hardware quirks:
+  - Indirect JMP page boundary bug (NMOS variants)
+  - ROR instruction quirk on Rev A (behaves like ASL)
 
 ### Architecture
 
@@ -247,8 +249,11 @@ cpu := cpu6502.NewBuilder(bus).
 The emulator supports multiple 6502 variants with accurate behavior differences:
 
 ```go
-// NMOS 6502 - Original chip with all documented bugs
+// NMOS 6502 (Rev B+) - Original chip with documented bugs (ROR works correctly)
 cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502)
+
+// NMOS 6502 Rev A - Early revision with ROR hardware quirk
+cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantNMOS6502RevA)
 
 // CMOS 65C02 - Enhanced version with bug fixes
 cpu := cpu6502.NewCPUWithVariant(bus, cpu6502.VariantCMOS65C02)
@@ -265,6 +270,9 @@ if cpu.Variant().SupportsDecimalMode() {
 }
 if cpu.Variant().HasIndirectJMPBug() {
     // Has page boundary bug in JMP ($xxFF)
+}
+if cpu.Variant().HasRORQuirk() {
+    // ROR behaves like ASL (Rev A only)
 }
 ```
 
@@ -504,18 +512,26 @@ The cache provides:
 
 This emulator accurately emulates multiple 6502 variants:
 
-- **NMOS 6502** - Original MOS Technology chip (Apple II, Commodore 64, Atari 8-bit)
+- **NMOS 6502 (Rev B+)** - Original MOS Technology chip (Apple II, Commodore 64, Atari 8-bit)
   - Supports decimal mode with NMOS-specific N/V flag behavior
   - Includes the indirect JMP page boundary bug
+  - ROR instruction works correctly
+- **NMOS 6502 Rev A** - Early revision (rare in production systems)
+  - Supports decimal mode with NMOS-specific N/V flag behavior
+  - Includes the indirect JMP page boundary bug
+  - **ROR instruction hardware quirk**: ROR behaves like ASL (shifts left, doesn't update carry)
 - **CMOS 65C02** - Enhanced Western Design Center version (Apple IIc, IIe enhanced)
   - Supports decimal mode with improved N/V flag behavior
   - Fixes the indirect JMP page boundary bug
+  - All instructions work correctly
 - **Ricoh 2A03** - NES/Famicom CPU (NTSC)
   - Decimal mode disabled (D flag ignored)
   - Includes the indirect JMP page boundary bug
+  - ROR instruction works correctly
 - **Ricoh 2A07** - PAL NES CPU
   - Decimal mode disabled (D flag ignored)
   - Includes the indirect JMP page boundary bug
+  - ROR instruction works correctly
 
 ## Contributing
 
