@@ -529,24 +529,6 @@ func (c *CPU) IZY() uint8 {
 // All operate functions remain the same method signatures:
 // func (c *CPU) OpName() uint8 { ... }
 
-// fetchDataIfNeeded - Fetch data if not in implied mode
-func (c *CPU) fetchDataIfNeeded() {
-	// Use enum comparison instead of reflection
-	if c.currentInstruction.AddrModeType != AddrModeIMP {
-		// Immediate mode reads the byte *at* addrAbs (which points to the operand)
-		// Other modes read from the calculated addrAbs.
-		c.fetchedData = c.read(c.addrAbs)
-	}
-	// No special handling needed here anymore for IMM vs others regarding fetching
-	// as IMM sets addrAbs correctly.
-}
-
-// Helper for setting Zero and Negative flags based on a value.
-func (c *CPU) setZNFlags(value uint8) {
-	c.setFlag(Z, value == 0)
-	c.setFlag(N, (value&0x80) > 0)
-}
-
 // ADC - Add with Carry
 //
 // Performs A = A + M + C, where:
