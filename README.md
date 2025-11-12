@@ -156,6 +156,62 @@ Run the test suite:
 go test -v
 ```
 
+## Examples
+
+The repository includes working examples demonstrating various features:
+
+### Running the Examples
+
+```bash
+# Basic example - simple program execution
+cd examples/basic
+go run main.go
+
+# Memory-mapped I/O example
+cd examples/memory-mapped
+go run main.go
+```
+
+### Available Examples
+
+- **`examples/basic/`** - Demonstrates basic CPU usage with a simple counting program
+  - Shows how to load a program into memory
+  - Demonstrates setting up reset vectors
+  - Shows state inspection and cycle counting
+
+- **`examples/memory-mapped/`** - Demonstrates memory-mapped I/O
+  - Shows ROM/RAM/IO memory separation
+  - Demonstrates writing to memory-mapped I/O ports
+  - Example outputs "HELLO" via I/O port
+
+### Creating Your Own Examples
+
+Use the examples as templates for your own programs:
+
+```go
+// 1. Implement the Bus interface
+type MyBus struct {
+    ram [65536]uint8
+}
+
+func (b *MyBus) Read(addr uint16) uint8 { return b.ram[addr] }
+func (b *MyBus) Write(addr uint16, data uint8) { b.ram[addr] = data }
+
+// 2. Create CPU and load program
+bus := &MyBus{}
+cpu := cpu6502.NewCPU(bus)
+
+// 3. Set reset vector and reset CPU
+bus.Write(0xFFFC, 0x00)
+bus.Write(0xFFFD, 0x80)
+cpu.Reset()
+
+// 4. Execute
+for cpu.RemainingCycles() > 0 {
+    cpu.Clock()
+}
+```
+
 ## Advanced Features
 
 ### CPU Configuration
