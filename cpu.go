@@ -5,6 +5,27 @@ import (
 	"log"
 )
 
+// ErrorType categorizes CPU errors
+type ErrorType uint8
+
+const (
+	ErrorIllegalOpcode ErrorType = iota
+	ErrorInvalidState
+	ErrorBusError
+)
+
+// CPUError represents an error during CPU execution
+type CPUError struct {
+	Type    ErrorType
+	Opcode  uint8
+	PC      uint16
+	Message string
+}
+
+func (e *CPUError) Error() string {
+	return fmt.Sprintf("CPU error at $%04X: %s (opcode $%02X)", e.PC, e.Message, e.Opcode)
+}
+
 // AddrModeType represents the addressing mode of an instruction
 type AddrModeType uint8
 
