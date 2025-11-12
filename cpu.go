@@ -30,51 +30,6 @@ import (
 	"log"
 )
 
-// ErrorType categorizes CPU errors
-type ErrorType uint8
-
-const (
-	ErrorIllegalOpcode ErrorType = iota
-	ErrorInvalidState
-	ErrorBusError
-)
-
-// CPUError represents an error during CPU execution
-type CPUError struct {
-	Type    ErrorType
-	Opcode  uint8
-	PC      uint16
-	Message string
-}
-
-func (e *CPUError) Error() string {
-	return fmt.Sprintf("CPU error at $%04X: %s (opcode $%02X)", e.PC, e.Message, e.Opcode)
-}
-
-// ErrorHandler defines how the CPU handles errors
-type ErrorHandler interface {
-	HandleError(err *CPUError) error
-}
-
-// StrictErrorHandler halts execution on any error
-type StrictErrorHandler struct{}
-
-func (h *StrictErrorHandler) HandleError(err *CPUError) error {
-	return err
-}
-
-// LoggingErrorHandler logs errors but continues execution
-type LoggingErrorHandler struct {
-	Logger *log.Logger
-}
-
-func (h *LoggingErrorHandler) HandleError(err *CPUError) error {
-	if h.Logger != nil {
-		h.Logger.Printf("CPU error: %v", err)
-	}
-	return nil // Continue execution
-}
-
 // Bus defines the interface for memory access.
 //
 // Implementations of this interface provide the CPU with access to
