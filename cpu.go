@@ -159,15 +159,23 @@ type CPUConfig struct {
 
 	// EnableDecimalMode allows disabling decimal mode even on variants that support it
 	EnableDecimalMode bool
+
+	// EnableInstructionCache enables instruction caching for performance
+	EnableInstructionCache bool
+
+	// InstructionCacheSize sets the cache size (default: 256 entries)
+	InstructionCacheSize int
 }
 
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() CPUConfig {
 	return CPUConfig{
-		Variant:           VariantNMOS6502,
-		ErrorHandler:      &LoggingErrorHandler{Logger: log.Default()},
-		StrictMode:        false,
-		EnableDecimalMode: true,
+		Variant:                VariantNMOS6502,
+		ErrorHandler:           &LoggingErrorHandler{Logger: log.Default()},
+		StrictMode:             false,
+		EnableDecimalMode:      true,
+		EnableInstructionCache: true,
+		InstructionCacheSize:   256,
 	}
 }
 
@@ -343,7 +351,11 @@ func NewCPUWithConfig(bus Bus, config CPUConfig) *CPU {
 		SP:           0xFD,
 		variant:      config.Variant,
 		errorHandler: errorHandler,
-		instrCache:   NewInstructionCache(),
+	}
+
+	// Initialize instruction cache if enabled
+	if config.EnableInstructionCache {
+		c.instrCache = NewInstructionCache()
 	}
 
 	c.buildLookupTable()
@@ -391,6 +403,18 @@ func (b *CPUBuilder) WithErrorHandler(handler ErrorHandler) *CPUBuilder {
 // DisableDecimalMode disables decimal mode
 func (b *CPUBuilder) DisableDecimalMode() *CPUBuilder {
 	b.config.EnableDecimalMode = false
+	return b
+}
+
+// DisableInstructionCache disables the instruction cache
+func (b *CPUBuilder) DisableInstructionCache() *CPUBuilder {
+	b.config.EnableInstructionCache = false
+	return b
+}
+
+// WithInstructionCacheSize sets the instruction cache size
+func (b *CPUBuilder) WithInstructionCacheSize(size int) *CPUBuilder {
+	b.config.InstructionCacheSize = size
 	return b
 }
 
