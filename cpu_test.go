@@ -55,7 +55,7 @@ func runCycles(cpu *CPU, cyclesToRun uint) uint64 {
 		// Check if CPU is stuck (e.g., on an unimplemented BRK or infinite loop)
 		// Use Peek instruction definition safely
 		nextOpcode := cpu.read(cpu.PC)
-		if cpu.Cycles == 0 && (cpu.lookup[nextOpcode].Operate == nil || getFuncPtr(cpu.lookup[nextOpcode].Operate) == getFuncPtr((*CPU).XXX)) {
+		if cpu.Cycles == 0 && cpu.lookup[nextOpcode].Operate == nil {
 			// Check for explicit XXX or unimplemented operate func
 			fmt.Printf("Warning: CPU potentially stuck at PC=0x%04X, Opcode=0x%02X (%s)\n", cpu.PC, nextOpcode, cpu.lookup[nextOpcode].Name)
 			break // Avoid infinite loop in test
@@ -1632,17 +1632,13 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 func TestLogicInstructions(t *testing.T) {
 	const baseAddr = 0x0600
 
-	// Get function pointers for comparison once
-	immPtr := getFuncPtr((*CPU).IMM)
-	zp0Ptr := getFuncPtr((*CPU).ZP0)
-	absPtr := getFuncPtr((*CPU).ABS)
-	// ... add others if testing those modes
+	// Use AddrModeType enum for comparison - no need to declare, use constants directly
 
 	// --- AND ---
 	t.Run("AND", func(t *testing.T) {
 		tests := []struct {
 			name        string
-			addrModePtr uintptr // Use uintptr for comparison
+			addrModePtr AddrModeType // Use uintptr for comparison
 			opcode      uint8
 			operand     uint8
 			memAddr     uint16
@@ -1652,10 +1648,10 @@ func TestLogicInstructions(t *testing.T) {
 			negative    bool
 			cycles      uint
 		}{
-			{"Immediate", immPtr, 0x29, 0x0F, 0, 0xF0, 0x00, true, false, 2},
-			{"Immediate Neg", immPtr, 0x29, 0xFF, 0, 0x81, 0x81, false, true, 2},
-			{"ZeroPage", zp0Ptr, 0x25, 0xAA, 0x50, 0xF0, 0xA0, false, true, 3},
-			{"Absolute", absPtr, 0x2D, 0x55, 0x1234, 0x3C, 0x14, false, false, 4},
+			{"Immediate", AddrModeIMM, 0x29, 0x0F, 0, 0xF0, 0x00, true, false, 2},
+			{"Immediate Neg", AddrModeIMM, 0x29, 0xFF, 0, 0x81, 0x81, false, true, 2},
+			{"ZeroPage", AddrModeZP0, 0x25, 0xAA, 0x50, 0xF0, 0xA0, false, true, 3},
+			{"Absolute", AddrModeABS, 0x2D, 0x55, 0x1234, 0x3C, 0x14, false, false, 4},
 			// Add more modes if needed (e.g., ZPX, ABX, ABY, IZX, IZY)
 		}
 
@@ -1667,12 +1663,12 @@ func TestLogicInstructions(t *testing.T) {
 
 				// Construct program based on addressing mode pointer
 				switch tt.addrModePtr {
-				case immPtr:
+				case AddrModeIMM:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				default:
@@ -1705,7 +1701,7 @@ func TestLogicInstructions(t *testing.T) {
 	t.Run("EOR", func(t *testing.T) {
 		tests := []struct {
 			name        string
-			addrModePtr uintptr
+			addrModePtr AddrModeType
 			opcode      uint8
 			operand     uint8
 			memAddr     uint16
@@ -1715,10 +1711,10 @@ func TestLogicInstructions(t *testing.T) {
 			negative    bool
 			cycles      uint
 		}{
-			{"Immediate", immPtr, 0x49, 0xFF, 0, 0x55, 0xAA, false, true, 2},
-			{"Immediate Zero", immPtr, 0x49, 0x33, 0, 0x33, 0x00, true, false, 2},
-			{"ZeroPage", zp0Ptr, 0x45, 0xF0, 0x60, 0x0F, 0xFF, false, true, 3},
-			{"Absolute", absPtr, 0x4D, 0x88, 0x4321, 0x88, 0x00, true, false, 4},
+			{"Immediate", AddrModeIMM, 0x49, 0xFF, 0, 0x55, 0xAA, false, true, 2},
+			{"Immediate Zero", AddrModeIMM, 0x49, 0x33, 0, 0x33, 0x00, true, false, 2},
+			{"ZeroPage", AddrModeZP0, 0x45, 0xF0, 0x60, 0x0F, 0xFF, false, true, 3},
+			{"Absolute", AddrModeABS, 0x4D, 0x88, 0x4321, 0x88, 0x00, true, false, 4},
 			// Add more modes if needed
 		}
 		for _, tt := range tests {
@@ -1729,12 +1725,12 @@ func TestLogicInstructions(t *testing.T) {
 
 				// Construct program based on addressing mode pointer
 				switch tt.addrModePtr {
-				case immPtr:
+				case AddrModeIMM:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				default:
@@ -1766,7 +1762,7 @@ func TestLogicInstructions(t *testing.T) {
 	t.Run("ORA", func(t *testing.T) {
 		tests := []struct {
 			name        string
-			addrModePtr uintptr
+			addrModePtr AddrModeType
 			opcode      uint8
 			operand     uint8
 			memAddr     uint16
@@ -1776,10 +1772,10 @@ func TestLogicInstructions(t *testing.T) {
 			negative    bool
 			cycles      uint
 		}{
-			{"Immediate", immPtr, 0x09, 0x0F, 0, 0xF0, 0xFF, false, true, 2},
-			{"Immediate Zero", immPtr, 0x09, 0x00, 0, 0x00, 0x00, true, false, 2},
-			{"ZeroPage", zp0Ptr, 0x05, 0xAA, 0x70, 0x55, 0xFF, false, true, 3},
-			{"Absolute", absPtr, 0x0D, 0x80, 0xABCD, 0x01, 0x81, false, true, 4},
+			{"Immediate", AddrModeIMM, 0x09, 0x0F, 0, 0xF0, 0xFF, false, true, 2},
+			{"Immediate Zero", AddrModeIMM, 0x09, 0x00, 0, 0x00, 0x00, true, false, 2},
+			{"ZeroPage", AddrModeZP0, 0x05, 0xAA, 0x70, 0x55, 0xFF, false, true, 3},
+			{"Absolute", AddrModeABS, 0x0D, 0x80, 0xABCD, 0x01, 0x81, false, true, 4},
 			// Add more modes if needed
 		}
 		for _, tt := range tests {
@@ -1790,12 +1786,12 @@ func TestLogicInstructions(t *testing.T) {
 
 				// Construct program based on addressing mode pointer
 				switch tt.addrModePtr {
-				case immPtr:
+				case AddrModeIMM:
 					program = []uint8{tt.opcode, tt.operand, 0x00}
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				default:
@@ -1827,7 +1823,7 @@ func TestLogicInstructions(t *testing.T) {
 	t.Run("BIT", func(t *testing.T) {
 		tests := []struct {
 			name        string
-			addrModePtr uintptr
+			addrModePtr AddrModeType
 			opcode      uint8
 			operand     uint8 // Value in memory
 			memAddr     uint16
@@ -1837,10 +1833,10 @@ func TestLogicInstructions(t *testing.T) {
 			overflow    bool // M bit 6
 			cycles      uint
 		}{
-			{"ZeroPage Z=1, N=1, V=0", zp0Ptr, 0x24, 0xAA, 0x80, 0x55, true, true, false, 3},     // 55 & AA = 00 (Z=1), AA bit 7=1 (N=1), AA bit 6=0 (V=0)
-			{"ZeroPage Z=0, N=0, V=1", zp0Ptr, 0x24, 0x55, 0x80, 0x77, false, false, true, 3},    // 77 & 55 = 55 (Z=0), 55 bit 7=0 (N=0), 55 bit 6=1 (V=1)
-			{"Absolute Z=0, N=1, V=1", absPtr, 0x2C, 0xC0, 0xBEEF, 0xFF, false, true, true, 4},   // FF & C0 = C0 (Z=0), C0 bit 7=1 (N=1), C0 bit 6=1 (V=1)
-			{"Absolute Z=0, N=0, V=0", absPtr, 0x2C, 0x3F, 0xBEEF, 0xFF, false, false, false, 4}, // FF & 3F = 3F (Z=0), 3F bit 7=0 (N=0), 3F bit 6=0 (V=0)
+			{"ZeroPage Z=1, N=1, V=0", AddrModeZP0, 0x24, 0xAA, 0x80, 0x55, true, true, false, 3},     // 55 & AA = 00 (Z=1), AA bit 7=1 (N=1), AA bit 6=0 (V=0)
+			{"ZeroPage Z=0, N=0, V=1", AddrModeZP0, 0x24, 0x55, 0x80, 0x77, false, false, true, 3},    // 77 & 55 = 55 (Z=0), 55 bit 7=0 (N=0), 55 bit 6=1 (V=1)
+			{"Absolute Z=0, N=1, V=1", AddrModeABS, 0x2C, 0xC0, 0xBEEF, 0xFF, false, true, true, 4},   // FF & C0 = C0 (Z=0), C0 bit 7=1 (N=1), C0 bit 6=1 (V=1)
+			{"Absolute Z=0, N=0, V=0", AddrModeABS, 0x2C, 0x3F, 0xBEEF, 0xFF, false, false, false, 4}, // FF & 3F = 3F (Z=0), 3F bit 7=0 (N=0), 3F bit 6=0 (V=0)
 		}
 
 		for _, tt := range tests {
@@ -1852,10 +1848,10 @@ func TestLogicInstructions(t *testing.T) {
 
 				// Construct program based on addressing mode pointer
 				switch tt.addrModePtr {
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, uint8(tt.memAddr), uint8(tt.memAddr >> 8), 0x00}
 					bus.Write(tt.memAddr, tt.operand)
 				default:
@@ -1892,17 +1888,12 @@ func TestLogicInstructions(t *testing.T) {
 func TestShiftRotateInstructions(t *testing.T) {
 	const baseAddr = 0x0800 // New base address for clarity
 
-	// Get function pointers for comparison once
-	impPtr := getFuncPtr((*CPU).IMP)
-	zp0Ptr := getFuncPtr((*CPU).ZP0)
-	zpxPtr := getFuncPtr((*CPU).ZPX)
-	absPtr := getFuncPtr((*CPU).ABS)
-	abxPtr := getFuncPtr((*CPU).ABX)
+	// Use AddrModeType enum for comparison - no need to declare, use constants directly
 
 	type ShiftRotateTest struct {
 		name             string
 		instrName        string // "ASL", "LSR", "ROL", "ROR"
-		addrModePtr      uintptr
+		addrModePtr      AddrModeType
 		opcode           uint8
 		initialValue     uint8
 		memAddr          uint16 // Used for non-implied modes
@@ -1917,48 +1908,48 @@ func TestShiftRotateInstructions(t *testing.T) {
 
 	tests := []ShiftRotateTest{
 		// --- ASL ---
-		{instrName: "ASL", name: "Accumulator Basic", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x42, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ASL", name: "Accumulator Set Carry", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x81, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "ASL", name: "Accumulator To Zero", addrModePtr: impPtr, opcode: 0x0A, initialValue: 0x80, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "ASL", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0x06, initialValue: 0x11, memAddr: 0x30, expectedValue: 0x22, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "ASL", name: "ZeroPage Set Carry", addrModePtr: zp0Ptr, opcode: 0x06, initialValue: 0xFF, memAddr: 0x31, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 5},
-		{instrName: "ASL", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0x16, initialValue: 0x03, memAddr: 0x40, setupX: 0x05, expectedValue: 0x06, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 40+5=45
-		{instrName: "ASL", name: "Absolute", addrModePtr: absPtr, opcode: 0x0E, initialValue: 0x80, memAddr: 0x1234, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
-		{instrName: "ASL", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0x1E, initialValue: 0x0F, memAddr: 0x2000, setupX: 0x10, expectedValue: 0x1E, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 2010
+		{instrName: "ASL", name: "Accumulator Basic", addrModePtr: AddrModeIMP, opcode: 0x0A, initialValue: 0x42, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ASL", name: "Accumulator Set Carry", addrModePtr: AddrModeIMP, opcode: 0x0A, initialValue: 0x81, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ASL", name: "Accumulator To Zero", addrModePtr: AddrModeIMP, opcode: 0x0A, initialValue: 0x80, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ASL", name: "ZeroPage", addrModePtr: AddrModeZP0, opcode: 0x06, initialValue: 0x11, memAddr: 0x30, expectedValue: 0x22, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "ASL", name: "ZeroPage Set Carry", addrModePtr: AddrModeZP0, opcode: 0x06, initialValue: 0xFF, memAddr: 0x31, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "ASL", name: "ZeroPage,X", addrModePtr: AddrModeZPX, opcode: 0x16, initialValue: 0x03, memAddr: 0x40, setupX: 0x05, expectedValue: 0x06, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 40+5=45
+		{instrName: "ASL", name: "Absolute", addrModePtr: AddrModeABS, opcode: 0x0E, initialValue: 0x80, memAddr: 0x1234, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "ASL", name: "Absolute,X", addrModePtr: AddrModeABX, opcode: 0x1E, initialValue: 0x0F, memAddr: 0x2000, setupX: 0x10, expectedValue: 0x1E, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 2010
 
 		// --- LSR ---
-		{instrName: "LSR", name: "Accumulator Basic", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x84, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "LSR", name: "Accumulator Set Carry", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x01, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "LSR", name: "Accumulator Zero", addrModePtr: impPtr, opcode: 0x4A, initialValue: 0x00, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "LSR", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0x46, initialValue: 0x22, memAddr: 0x32, expectedValue: 0x11, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "LSR", name: "ZeroPage Set Carry", addrModePtr: zp0Ptr, opcode: 0x46, initialValue: 0xFF, memAddr: 0x33, expectedValue: 0x7F, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "LSR", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0x56, initialValue: 0x06, memAddr: 0x50, setupX: 0x02, expectedValue: 0x03, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 50+2=52
-		{instrName: "LSR", name: "Absolute", addrModePtr: absPtr, opcode: 0x4E, initialValue: 0x01, memAddr: 0x4321, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
-		{instrName: "LSR", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0x5E, initialValue: 0x1E, memAddr: 0x3000, setupX: 0x20, expectedValue: 0x0F, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 3020
+		{instrName: "LSR", name: "Accumulator Basic", addrModePtr: AddrModeIMP, opcode: 0x4A, initialValue: 0x84, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "Accumulator Set Carry", addrModePtr: AddrModeIMP, opcode: 0x4A, initialValue: 0x01, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "Accumulator Zero", addrModePtr: AddrModeIMP, opcode: 0x4A, initialValue: 0x00, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "LSR", name: "ZeroPage", addrModePtr: AddrModeZP0, opcode: 0x46, initialValue: 0x22, memAddr: 0x32, expectedValue: 0x11, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "LSR", name: "ZeroPage Set Carry", addrModePtr: AddrModeZP0, opcode: 0x46, initialValue: 0xFF, memAddr: 0x33, expectedValue: 0x7F, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "LSR", name: "ZeroPage,X", addrModePtr: AddrModeZPX, opcode: 0x56, initialValue: 0x06, memAddr: 0x50, setupX: 0x02, expectedValue: 0x03, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = 50+2=52
+		{instrName: "LSR", name: "Absolute", addrModePtr: AddrModeABS, opcode: 0x4E, initialValue: 0x01, memAddr: 0x4321, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "LSR", name: "Absolute,X", addrModePtr: AddrModeABX, opcode: 0x5E, initialValue: 0x1E, memAddr: 0x3000, setupX: 0x20, expectedValue: 0x0F, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 3020
 
 		// --- ROL ---
-		{instrName: "ROL", name: "Accumulator Basic C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x42, initialCarry: false, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ROL", name: "Accumulator Basic C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x42, initialCarry: true, expectedValue: 0x85, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ROL", name: "Accumulator Set Carry C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x81, initialCarry: false, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "ROL", name: "Accumulator Set Carry C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x81, initialCarry: true, expectedValue: 0x03, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "ROL", name: "Accumulator To Zero C=0", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x80, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "ROL", name: "Accumulator To One C=1", addrModePtr: impPtr, opcode: 0x2A, initialValue: 0x80, initialCarry: true, expectedValue: 0x01, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "ROL", name: "ZeroPage C=1", addrModePtr: zp0Ptr, opcode: 0x26, initialValue: 0x11, memAddr: 0x34, initialCarry: true, expectedValue: 0x23, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "ROL", name: "ZeroPage,X C=0", addrModePtr: zpxPtr, opcode: 0x36, initialValue: 0xFF, memAddr: 0x60, setupX: 0x01, initialCarry: false, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = 61
-		{instrName: "ROL", name: "Absolute C=1", addrModePtr: absPtr, opcode: 0x2E, initialValue: 0x7F, memAddr: 0x5678, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
-		{instrName: "ROL", name: "Absolute,X C=0", addrModePtr: abxPtr, opcode: 0x3E, initialValue: 0x00, memAddr: 0x4000, setupX: 0x30, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 7}, // Addr = 4030
+		{instrName: "ROL", name: "Accumulator Basic C=0", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x42, initialCarry: false, expectedValue: 0x84, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Basic C=1", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x42, initialCarry: true, expectedValue: 0x85, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Set Carry C=0", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x81, initialCarry: false, expectedValue: 0x02, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator Set Carry C=1", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x81, initialCarry: true, expectedValue: 0x03, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator To Zero C=0", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x80, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "Accumulator To One C=1", addrModePtr: AddrModeIMP, opcode: 0x2A, initialValue: 0x80, initialCarry: true, expectedValue: 0x01, expectedCarry: true, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROL", name: "ZeroPage C=1", addrModePtr: AddrModeZP0, opcode: 0x26, initialValue: 0x11, memAddr: 0x34, initialCarry: true, expectedValue: 0x23, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "ROL", name: "ZeroPage,X C=0", addrModePtr: AddrModeZPX, opcode: 0x36, initialValue: 0xFF, memAddr: 0x60, setupX: 0x01, initialCarry: false, expectedValue: 0xFE, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = 61
+		{instrName: "ROL", name: "Absolute C=1", addrModePtr: AddrModeABS, opcode: 0x2E, initialValue: 0x7F, memAddr: 0x5678, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "ROL", name: "Absolute,X C=0", addrModePtr: AddrModeABX, opcode: 0x3E, initialValue: 0x00, memAddr: 0x4000, setupX: 0x30, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 7}, // Addr = 4030
 
 		// --- ROR ---
-		{instrName: "ROR", name: "Accumulator Basic C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x84, initialCarry: false, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "ROR", name: "Accumulator Basic C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x84, initialCarry: true, expectedValue: 0xC2, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ROR", name: "Accumulator Set Carry C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x01, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "ROR", name: "Accumulator Set Carry C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x01, initialCarry: true, expectedValue: 0x80, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ROR", name: "Accumulator Zero C=0", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x00, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "ROR", name: "Accumulator Neg C=1", addrModePtr: impPtr, opcode: 0x6A, initialValue: 0x00, initialCarry: true, expectedValue: 0x80, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "ROR", name: "ZeroPage C=1", addrModePtr: zp0Ptr, opcode: 0x66, initialValue: 0x22, memAddr: 0x35, initialCarry: true, expectedValue: 0x91, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 5},
-		{instrName: "ROR", name: "ZeroPage,X C=0", addrModePtr: zpxPtr, opcode: 0x76, initialValue: 0x01, memAddr: 0x70, setupX: 0x03, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6}, // Addr = 73
-		{instrName: "ROR", name: "Absolute C=1", addrModePtr: absPtr, opcode: 0x6E, initialValue: 0xFE, memAddr: 0x8765, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
-		{instrName: "ROR", name: "Absolute,X C=0", addrModePtr: abxPtr, opcode: 0x7E, initialValue: 0xAA, memAddr: 0x5000, setupX: 0x40, initialCarry: false, expectedValue: 0x55, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 5040
+		{instrName: "ROR", name: "Accumulator Basic C=0", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x84, initialCarry: false, expectedValue: 0x42, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Basic C=1", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x84, initialCarry: true, expectedValue: 0xC2, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Set Carry C=0", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x01, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Set Carry C=1", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x01, initialCarry: true, expectedValue: 0x80, expectedCarry: true, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Zero C=0", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x00, initialCarry: false, expectedValue: 0x00, expectedCarry: false, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "ROR", name: "Accumulator Neg C=1", addrModePtr: AddrModeIMP, opcode: 0x6A, initialValue: 0x00, initialCarry: true, expectedValue: 0x80, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "ROR", name: "ZeroPage C=1", addrModePtr: AddrModeZP0, opcode: 0x66, initialValue: 0x22, memAddr: 0x35, initialCarry: true, expectedValue: 0x91, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "ROR", name: "ZeroPage,X C=0", addrModePtr: AddrModeZPX, opcode: 0x76, initialValue: 0x01, memAddr: 0x70, setupX: 0x03, initialCarry: false, expectedValue: 0x00, expectedCarry: true, expectedZero: true, expectedNegative: false, cycles: 6}, // Addr = 73
+		{instrName: "ROR", name: "Absolute C=1", addrModePtr: AddrModeABS, opcode: 0x6E, initialValue: 0xFE, memAddr: 0x8765, initialCarry: true, expectedValue: 0xFF, expectedCarry: false, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "ROR", name: "Absolute,X C=0", addrModePtr: AddrModeABX, opcode: 0x7E, initialValue: 0xAA, memAddr: 0x5000, setupX: 0x40, initialCarry: false, expectedValue: 0x55, expectedCarry: false, expectedZero: false, expectedNegative: false, cycles: 7}, // Addr = 5040
 	}
 
 	for _, tt := range tests {
@@ -1972,7 +1963,7 @@ func TestShiftRotateInstructions(t *testing.T) {
 			var program []uint8
 			var effectiveAddr uint16
 
-			if tt.addrModePtr == impPtr {
+			if tt.addrModePtr == AddrModeIMP {
 				cpu.A = tt.initialValue
 				program = []uint8{tt.opcode, 0x00} // Add BRK for safety
 				effectiveAddr = 0                  // Not used
@@ -1982,20 +1973,20 @@ func TestShiftRotateInstructions(t *testing.T) {
 				addrArgHigh := uint8(tt.memAddr >> 8)
 
 				switch tt.addrModePtr {
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = uint16(addrArgLow)
 					bus.Write(effectiveAddr, tt.initialValue)
-				case zpxPtr:
+				case AddrModeZPX:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
 					bus.Write(effectiveAddr, tt.initialValue)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					effectiveAddr = tt.memAddr
 					bus.Write(effectiveAddr, tt.initialValue)
-				case abxPtr:
+				case AddrModeABX:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					// Note: ABX cycle count depends on page cross, but the test provides the expected total.
@@ -2018,7 +2009,7 @@ func TestShiftRotateInstructions(t *testing.T) {
 
 			// --- Verification ---
 			var finalValue uint8
-			if tt.addrModePtr == impPtr {
+			if tt.addrModePtr == AddrModeIMP {
 				finalValue = cpu.A
 			} else {
 				// Re-calculate effective address for indexed modes if necessary, as CPU state might have changed
@@ -2030,7 +2021,7 @@ func TestShiftRotateInstructions(t *testing.T) {
 
 			// Check Result Value
 			if finalValue != tt.expectedValue {
-				if tt.addrModePtr == impPtr {
+				if tt.addrModePtr == AddrModeIMP {
 					t.Errorf("%s %s failed: Expected A=0x%02X, got A=0x%02X", tt.instrName, tt.name, tt.expectedValue, finalValue)
 				} else {
 					t.Errorf("%s %s failed: Expected Mem[0x%04X]=0x%02X, got 0x%02X", tt.instrName, tt.name, effectiveAddr, tt.expectedValue, finalValue)
@@ -2330,17 +2321,12 @@ func TestInterruptMiscInstructions(t *testing.T) {
 func TestIncrementDecrement(t *testing.T) {
 	const baseAddr = 0x0900 // New base address
 
-	// Get function pointers for comparison once
-	impPtr := getFuncPtr((*CPU).IMP)
-	zp0Ptr := getFuncPtr((*CPU).ZP0)
-	zpxPtr := getFuncPtr((*CPU).ZPX)
-	absPtr := getFuncPtr((*CPU).ABS)
-	abxPtr := getFuncPtr((*CPU).ABX)
+	// Use AddrModeType enum for comparison - no need to declare, use constants directly
 
 	type IncDecTest struct {
 		name             string
 		instrName        string // "INC", "DEC", "INX", "DEX", "INY", "DEY"
-		addrModePtr      uintptr
+		addrModePtr      AddrModeType
 		opcode           uint8
 		initialValue     uint8
 		reg              *uint8 // Pointer to X or Y for INX/DEX/INY/DEY, nil for INC/DEC
@@ -2354,38 +2340,38 @@ func TestIncrementDecrement(t *testing.T) {
 
 	tests := []IncDecTest{
 		// --- INX ---
-		{instrName: "INX", name: "Basic", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0x10, reg: nil, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 2}, // reg will be set later
-		{instrName: "INX", name: "Wrap Zero", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "INX", name: "To Negative", addrModePtr: impPtr, opcode: 0xE8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "INX", name: "Basic", addrModePtr: AddrModeIMP, opcode: 0xE8, initialValue: 0x10, reg: nil, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 2}, // reg will be set later
+		{instrName: "INX", name: "Wrap Zero", addrModePtr: AddrModeIMP, opcode: 0xE8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "INX", name: "To Negative", addrModePtr: AddrModeIMP, opcode: 0xE8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
 
 		// --- INY ---
-		{instrName: "INY", name: "Basic", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0x20, reg: nil, expectedValue: 0x21, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "INY", name: "Wrap Zero", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
-		{instrName: "INY", name: "To Negative", addrModePtr: impPtr, opcode: 0xC8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "INY", name: "Basic", addrModePtr: AddrModeIMP, opcode: 0xC8, initialValue: 0x20, reg: nil, expectedValue: 0x21, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "INY", name: "Wrap Zero", addrModePtr: AddrModeIMP, opcode: 0xC8, initialValue: 0xFF, reg: nil, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 2},
+		{instrName: "INY", name: "To Negative", addrModePtr: AddrModeIMP, opcode: 0xC8, initialValue: 0x7F, reg: nil, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 2},
 
 		// --- DEX ---
-		{instrName: "DEX", name: "Basic", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x11, reg: nil, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "DEX", name: "Wrap Neg", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "DEX", name: "From Negative", addrModePtr: impPtr, opcode: 0xCA, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEX", name: "Basic", addrModePtr: AddrModeIMP, opcode: 0xCA, initialValue: 0x11, reg: nil, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEX", name: "Wrap Neg", addrModePtr: AddrModeIMP, opcode: 0xCA, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "DEX", name: "From Negative", addrModePtr: AddrModeIMP, opcode: 0xCA, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
 
 		// --- DEY ---
-		{instrName: "DEY", name: "Basic", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x21, reg: nil, expectedValue: 0x20, expectedZero: false, expectedNegative: false, cycles: 2},
-		{instrName: "DEY", name: "Wrap Neg", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
-		{instrName: "DEY", name: "From Negative", addrModePtr: impPtr, opcode: 0x88, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEY", name: "Basic", addrModePtr: AddrModeIMP, opcode: 0x88, initialValue: 0x21, reg: nil, expectedValue: 0x20, expectedZero: false, expectedNegative: false, cycles: 2},
+		{instrName: "DEY", name: "Wrap Neg", addrModePtr: AddrModeIMP, opcode: 0x88, initialValue: 0x00, reg: nil, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 2},
+		{instrName: "DEY", name: "From Negative", addrModePtr: AddrModeIMP, opcode: 0x88, initialValue: 0x80, reg: nil, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 2},
 
 		// --- INC (Memory) ---
-		{instrName: "INC", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0xE6, initialValue: 0x10, memAddr: 0x90, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "INC", name: "ZeroPage Wrap", addrModePtr: zp0Ptr, opcode: 0xE6, initialValue: 0xFF, memAddr: 0x91, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 5},
-		{instrName: "INC", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0xF6, initialValue: 0x7F, memAddr: 0xA0, setupX: 0x05, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = A5
-		{instrName: "INC", name: "Absolute", addrModePtr: absPtr, opcode: 0xEE, initialValue: 0xAA, memAddr: 0xAAAA, expectedValue: 0xAB, expectedZero: false, expectedNegative: true, cycles: 6},
-		{instrName: "INC", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0xFE, initialValue: 0xFE, memAddr: 0xBB00, setupX: 0xCC, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = BBCC
+		{instrName: "INC", name: "ZeroPage", addrModePtr: AddrModeZP0, opcode: 0xE6, initialValue: 0x10, memAddr: 0x90, expectedValue: 0x11, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "INC", name: "ZeroPage Wrap", addrModePtr: AddrModeZP0, opcode: 0xE6, initialValue: 0xFF, memAddr: 0x91, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 5},
+		{instrName: "INC", name: "ZeroPage,X", addrModePtr: AddrModeZPX, opcode: 0xF6, initialValue: 0x7F, memAddr: 0xA0, setupX: 0x05, expectedValue: 0x80, expectedZero: false, expectedNegative: true, cycles: 6}, // Addr = A5
+		{instrName: "INC", name: "Absolute", addrModePtr: AddrModeABS, opcode: 0xEE, initialValue: 0xAA, memAddr: 0xAAAA, expectedValue: 0xAB, expectedZero: false, expectedNegative: true, cycles: 6},
+		{instrName: "INC", name: "Absolute,X", addrModePtr: AddrModeABX, opcode: 0xFE, initialValue: 0xFE, memAddr: 0xBB00, setupX: 0xCC, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = BBCC
 
 		// --- DEC (Memory) ---
-		{instrName: "DEC", name: "ZeroPage", addrModePtr: zp0Ptr, opcode: 0xC6, initialValue: 0x11, memAddr: 0x92, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 5},
-		{instrName: "DEC", name: "ZeroPage Wrap", addrModePtr: zp0Ptr, opcode: 0xC6, initialValue: 0x00, memAddr: 0x93, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 5},
-		{instrName: "DEC", name: "ZeroPage,X", addrModePtr: zpxPtr, opcode: 0xD6, initialValue: 0x80, memAddr: 0xB0, setupX: 0x06, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = B6
-		{instrName: "DEC", name: "Absolute", addrModePtr: absPtr, opcode: 0xCE, initialValue: 0x01, memAddr: 0xCCCC, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 6},
-		{instrName: "DEC", name: "Absolute,X", addrModePtr: abxPtr, opcode: 0xDE, initialValue: 0xAB, memAddr: 0xDD00, setupX: 0xDD, expectedValue: 0xAA, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = DD DD
+		{instrName: "DEC", name: "ZeroPage", addrModePtr: AddrModeZP0, opcode: 0xC6, initialValue: 0x11, memAddr: 0x92, expectedValue: 0x10, expectedZero: false, expectedNegative: false, cycles: 5},
+		{instrName: "DEC", name: "ZeroPage Wrap", addrModePtr: AddrModeZP0, opcode: 0xC6, initialValue: 0x00, memAddr: 0x93, expectedValue: 0xFF, expectedZero: false, expectedNegative: true, cycles: 5},
+		{instrName: "DEC", name: "ZeroPage,X", addrModePtr: AddrModeZPX, opcode: 0xD6, initialValue: 0x80, memAddr: 0xB0, setupX: 0x06, expectedValue: 0x7F, expectedZero: false, expectedNegative: false, cycles: 6}, // Addr = B6
+		{instrName: "DEC", name: "Absolute", addrModePtr: AddrModeABS, opcode: 0xCE, initialValue: 0x01, memAddr: 0xCCCC, expectedValue: 0x00, expectedZero: true, expectedNegative: false, cycles: 6},
+		{instrName: "DEC", name: "Absolute,X", addrModePtr: AddrModeABX, opcode: 0xDE, initialValue: 0xAB, memAddr: 0xDD00, setupX: 0xDD, expectedValue: 0xAA, expectedZero: false, expectedNegative: true, cycles: 7}, // Addr = DD DD
 	}
 
 	for _, tt := range tests {
@@ -2407,7 +2393,7 @@ func TestIncrementDecrement(t *testing.T) {
 				targetReg = &cpu.Y
 			}
 
-			if tt.addrModePtr == impPtr {
+			if tt.addrModePtr == AddrModeIMP {
 				if targetReg == nil {
 					t.Fatalf("%s %s: IMP mode specified but no target register (X/Y)", tt.instrName, tt.name)
 				}
@@ -2420,20 +2406,20 @@ func TestIncrementDecrement(t *testing.T) {
 				addrArgHigh := uint8(tt.memAddr >> 8)
 
 				switch tt.addrModePtr {
-				case zp0Ptr:
+				case AddrModeZP0:
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = uint16(addrArgLow)
 					bus.Write(effectiveAddr, tt.initialValue)
-				case zpxPtr:
+				case AddrModeZPX:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, 0x00}
 					effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
 					bus.Write(effectiveAddr, tt.initialValue)
-				case absPtr:
+				case AddrModeABS:
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					effectiveAddr = tt.memAddr
 					bus.Write(effectiveAddr, tt.initialValue)
-				case abxPtr:
+				case AddrModeABX:
 					cpu.X = tt.setupX
 					program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 					// Similar to shifts, effective address calculated by CPU, verify final location
@@ -2453,7 +2439,7 @@ func TestIncrementDecrement(t *testing.T) {
 
 			// --- Verification ---
 			var finalValue uint8
-			if tt.addrModePtr == impPtr {
+			if tt.addrModePtr == AddrModeIMP {
 				finalValue = *targetReg // Read from X or Y
 			} else {
 				// INC/DEC modify memory
@@ -2462,7 +2448,7 @@ func TestIncrementDecrement(t *testing.T) {
 
 			// Check Result Value
 			if finalValue != tt.expectedValue {
-				if tt.addrModePtr == impPtr {
+				if tt.addrModePtr == AddrModeIMP {
 					t.Errorf("%s %s failed: Expected Reg=0x%02X, got Reg=0x%02X", tt.instrName, tt.name, tt.expectedValue, finalValue)
 				} else {
 					t.Errorf("%s %s failed: Expected Mem[0x%04X]=0x%02X, got 0x%02X", tt.instrName, tt.name, effectiveAddr, tt.expectedValue, finalValue)
@@ -2488,21 +2474,13 @@ func TestIncrementDecrement(t *testing.T) {
 func TestCompareInstructions(t *testing.T) {
 	const baseAddr = 0x0B00 // New base address
 
-	// Get function pointers for comparison once
-	immPtr := getFuncPtr((*CPU).IMM)
-	zp0Ptr := getFuncPtr((*CPU).ZP0)
-	zpxPtr := getFuncPtr((*CPU).ZPX)
-	absPtr := getFuncPtr((*CPU).ABS)
-	abxPtr := getFuncPtr((*CPU).ABX)
-	abyPtr := getFuncPtr((*CPU).ABY)
-	izxPtr := getFuncPtr((*CPU).IZX)
-	izyPtr := getFuncPtr((*CPU).IZY)
+	// Use AddrModeType enum for comparison - no need to declare, use constants directly
 
 	type CompareTest struct {
 		name             string
 		instrName        string // "CMP", "CPX", "CPY"
 		register         byte   // 'A', 'X', or 'Y'
-		addrModePtr      uintptr
+		addrModePtr      AddrModeType
 		opcode           uint8
 		initialRegValue  uint8
 		operandValue     uint8    // Immediate or value in memory
@@ -2516,30 +2494,30 @@ func TestCompareInstructions(t *testing.T) {
 
 	tests := []CompareTest{
 		// --- CMP (Compare Accumulator) ---
-		{instrName: "CMP", register: 'A', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x55, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
-		{instrName: "CMP", register: 'A', name: "Immediate Greater", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x60, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},   // 60-55=0B
-		{instrName: "CMP", register: 'A', name: "Immediate Less", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x40, operandValue: 0x55, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},      // 40-55=EB
-		{instrName: "CMP", register: 'A', name: "Immediate NegResult", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x00, operandValue: 0x01, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true}, // 00-01=FF
-		{instrName: "CMP", register: 'A', name: "Immediate SameNeg", addrModePtr: immPtr, opcode: 0xC9, initialRegValue: 0x80, operandValue: 0x80, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
-		{instrName: "CMP", register: 'A', name: "ZeroPage Greater", addrModePtr: zp0Ptr, opcode: 0xC5, initialRegValue: 0xAA, operandValue: 0x55, memAddr: 0x40, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false},                            // AA-55=55
-		{instrName: "CMP", register: 'A', name: "ZeroPage,X Less", addrModePtr: zpxPtr, opcode: 0xD5, initialRegValue: 0x10, operandValue: 0x20, memAddr: 0x50, setupXY: [2]uint8{0x05, 0}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true}, // Addr=55, 10-20=F0
-		{instrName: "CMP", register: 'A', name: "Absolute Equal", addrModePtr: absPtr, opcode: 0xCD, initialRegValue: 0xBE, operandValue: 0xBE, memAddr: 0xABCD, cycles: 4, expectedCarry: true, expectedZero: true, expectedNegative: false},
-		{instrName: "CMP", register: 'A', name: "Absolute,X Greater", addrModePtr: abxPtr, opcode: 0xDD, initialRegValue: 0xFF, operandValue: 0x01, memAddr: 0x1000, setupXY: [2]uint8{0x10, 0}, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // Addr=1010, FF-01=FE (N=1) Base cycles, no page cross
-		{instrName: "CMP", register: 'A', name: "Absolute,Y Less", addrModePtr: abyPtr, opcode: 0xD9, initialRegValue: 0x7F, operandValue: 0x80, memAddr: 0x2000, setupXY: [2]uint8{0, 0x20}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true},   // Addr=2020, 7F-80=FF (N=1) Base cycles, no page cross
-		{instrName: "CMP", register: 'A', name: "Indirect,X Equal", addrModePtr: izxPtr, opcode: 0xC1, initialRegValue: 0x42, operandValue: 0x42, memAddr: 0x60, setupXY: [2]uint8{0x03, 0}, cycles: 6, expectedCarry: true, expectedZero: true, expectedNegative: false},     // ZP Base=60, X=3 -> Addr=63
-		{instrName: "CMP", register: 'A', name: "Indirect,Y Greater", addrModePtr: izyPtr, opcode: 0xD1, initialRegValue: 0x90, operandValue: 0x80, memAddr: 0x70, setupXY: [2]uint8{0, 0x0A}, cycles: 5, expectedCarry: true, expectedZero: false, expectedNegative: false},  // ZP Base=70 -> points somewhere, +Y=A -> 90-80=10 (N=0) Base cycles, no page cross
+		{instrName: "CMP", register: 'A', name: "Immediate Equal", addrModePtr: AddrModeIMM, opcode: 0xC9, initialRegValue: 0x55, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "Immediate Greater", addrModePtr: AddrModeIMM, opcode: 0xC9, initialRegValue: 0x60, operandValue: 0x55, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},   // 60-55=0B
+		{instrName: "CMP", register: 'A', name: "Immediate Less", addrModePtr: AddrModeIMM, opcode: 0xC9, initialRegValue: 0x40, operandValue: 0x55, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},      // 40-55=EB
+		{instrName: "CMP", register: 'A', name: "Immediate NegResult", addrModePtr: AddrModeIMM, opcode: 0xC9, initialRegValue: 0x00, operandValue: 0x01, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true}, // 00-01=FF
+		{instrName: "CMP", register: 'A', name: "Immediate SameNeg", addrModePtr: AddrModeIMM, opcode: 0xC9, initialRegValue: 0x80, operandValue: 0x80, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "ZeroPage Greater", addrModePtr: AddrModeZP0, opcode: 0xC5, initialRegValue: 0xAA, operandValue: 0x55, memAddr: 0x40, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false},                            // AA-55=55
+		{instrName: "CMP", register: 'A', name: "ZeroPage,X Less", addrModePtr: AddrModeZPX, opcode: 0xD5, initialRegValue: 0x10, operandValue: 0x20, memAddr: 0x50, setupXY: [2]uint8{0x05, 0}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true}, // Addr=55, 10-20=F0
+		{instrName: "CMP", register: 'A', name: "Absolute Equal", addrModePtr: AddrModeABS, opcode: 0xCD, initialRegValue: 0xBE, operandValue: 0xBE, memAddr: 0xABCD, cycles: 4, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CMP", register: 'A', name: "Absolute,X Greater", addrModePtr: AddrModeABX, opcode: 0xDD, initialRegValue: 0xFF, operandValue: 0x01, memAddr: 0x1000, setupXY: [2]uint8{0x10, 0}, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // Addr=1010, FF-01=FE (N=1) Base cycles, no page cross
+		{instrName: "CMP", register: 'A', name: "Absolute,Y Less", addrModePtr: AddrModeABY, opcode: 0xD9, initialRegValue: 0x7F, operandValue: 0x80, memAddr: 0x2000, setupXY: [2]uint8{0, 0x20}, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: true},   // Addr=2020, 7F-80=FF (N=1) Base cycles, no page cross
+		{instrName: "CMP", register: 'A', name: "Indirect,X Equal", addrModePtr: AddrModeIZX, opcode: 0xC1, initialRegValue: 0x42, operandValue: 0x42, memAddr: 0x60, setupXY: [2]uint8{0x03, 0}, cycles: 6, expectedCarry: true, expectedZero: true, expectedNegative: false},     // ZP Base=60, X=3 -> Addr=63
+		{instrName: "CMP", register: 'A', name: "Indirect,Y Greater", addrModePtr: AddrModeIZY, opcode: 0xD1, initialRegValue: 0x90, operandValue: 0x80, memAddr: 0x70, setupXY: [2]uint8{0, 0x0A}, cycles: 5, expectedCarry: true, expectedZero: false, expectedNegative: false},  // ZP Base=70 -> points somewhere, +Y=A -> 90-80=10 (N=0) Base cycles, no page cross
 
 		// --- CPX (Compare X Register) ---
-		{instrName: "CPX", register: 'X', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xE0, initialRegValue: 0x33, operandValue: 0x33, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
-		{instrName: "CPX", register: 'X', name: "Immediate Less", addrModePtr: immPtr, opcode: 0xE0, initialRegValue: 0x80, operandValue: 0x81, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},                  // 80-81=FF
-		{instrName: "CPX", register: 'X', name: "ZeroPage Greater", addrModePtr: zp0Ptr, opcode: 0xE4, initialRegValue: 0x01, operandValue: 0x00, memAddr: 0x41, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false}, // 01-00=01
-		{instrName: "CPX", register: 'X', name: "Absolute Less", addrModePtr: absPtr, opcode: 0xEC, initialRegValue: 0x00, operandValue: 0xFF, memAddr: 0xBEEF, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: false}, // 00-FF=01
+		{instrName: "CPX", register: 'X', name: "Immediate Equal", addrModePtr: AddrModeIMM, opcode: 0xE0, initialRegValue: 0x33, operandValue: 0x33, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CPX", register: 'X', name: "Immediate Less", addrModePtr: AddrModeIMM, opcode: 0xE0, initialRegValue: 0x80, operandValue: 0x81, cycles: 2, expectedCarry: false, expectedZero: false, expectedNegative: true},                  // 80-81=FF
+		{instrName: "CPX", register: 'X', name: "ZeroPage Greater", addrModePtr: AddrModeZP0, opcode: 0xE4, initialRegValue: 0x01, operandValue: 0x00, memAddr: 0x41, cycles: 3, expectedCarry: true, expectedZero: false, expectedNegative: false}, // 01-00=01
+		{instrName: "CPX", register: 'X', name: "Absolute Less", addrModePtr: AddrModeABS, opcode: 0xEC, initialRegValue: 0x00, operandValue: 0xFF, memAddr: 0xBEEF, cycles: 4, expectedCarry: false, expectedZero: false, expectedNegative: false}, // 00-FF=01
 
 		// --- CPY (Compare Y Register) ---
-		{instrName: "CPY", register: 'Y', name: "Immediate Equal", addrModePtr: immPtr, opcode: 0xC0, initialRegValue: 0xCC, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
-		{instrName: "CPY", register: 'Y', name: "Immediate Greater", addrModePtr: immPtr, opcode: 0xC0, initialRegValue: 0xDD, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},                    // DD-CC=11
-		{instrName: "CPY", register: 'Y', name: "ZeroPage Less", addrModePtr: zp0Ptr, opcode: 0xC4, initialRegValue: 0x10, operandValue: 0xF0, memAddr: 0x42, cycles: 3, expectedCarry: false, expectedZero: false, expectedNegative: false},        // 10-F0 = 20
-		{instrName: "CPY", register: 'Y', name: "Absolute Greater Neg", addrModePtr: absPtr, opcode: 0xCC, initialRegValue: 0x80, operandValue: 0x00, memAddr: 0xCAFE, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // 80-00=80
+		{instrName: "CPY", register: 'Y', name: "Immediate Equal", addrModePtr: AddrModeIMM, opcode: 0xC0, initialRegValue: 0xCC, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: true, expectedNegative: false},
+		{instrName: "CPY", register: 'Y', name: "Immediate Greater", addrModePtr: AddrModeIMM, opcode: 0xC0, initialRegValue: 0xDD, operandValue: 0xCC, cycles: 2, expectedCarry: true, expectedZero: false, expectedNegative: false},                    // DD-CC=11
+		{instrName: "CPY", register: 'Y', name: "ZeroPage Less", addrModePtr: AddrModeZP0, opcode: 0xC4, initialRegValue: 0x10, operandValue: 0xF0, memAddr: 0x42, cycles: 3, expectedCarry: false, expectedZero: false, expectedNegative: false},        // 10-F0 = 20
+		{instrName: "CPY", register: 'Y', name: "Absolute Greater Neg", addrModePtr: AddrModeABS, opcode: 0xCC, initialRegValue: 0x80, operandValue: 0x00, memAddr: 0xCAFE, cycles: 4, expectedCarry: true, expectedZero: false, expectedNegative: true}, // 80-00=80
 	}
 
 	for _, tt := range tests {
@@ -2574,36 +2552,36 @@ func TestCompareInstructions(t *testing.T) {
 			addrArgHigh := uint8(tt.memAddr >> 8)
 
 			switch tt.addrModePtr {
-			case immPtr:
+			case AddrModeIMM:
 				program = []uint8{tt.opcode, tt.operandValue, 0x00}
-			case zp0Ptr:
+			case AddrModeZP0:
 				program = []uint8{tt.opcode, addrArgLow, 0x00}
 				effectiveAddr = uint16(addrArgLow)
 				bus.Write(effectiveAddr, tt.operandValue)
-			case zpxPtr: // Only CMP uses this for compare
+			case AddrModeZPX: // Only CMP uses this for compare
 				program = []uint8{tt.opcode, addrArgLow, 0x00}
 				effectiveAddr = (uint16(addrArgLow) + uint16(cpu.X)) & 0x00FF
 				bus.Write(effectiveAddr, tt.operandValue)
-			case absPtr:
+			case AddrModeABS:
 				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 				effectiveAddr = tt.memAddr
 				bus.Write(effectiveAddr, tt.operandValue)
-			case abxPtr: // Only CMP uses this for compare
+			case AddrModeABX: // Only CMP uses this for compare
 				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 				effectiveAddr = tt.memAddr + uint16(cpu.X)
 				bus.Write(effectiveAddr, tt.operandValue)
-			case abyPtr: // Only CMP uses this for compare
+			case AddrModeABY: // Only CMP uses this for compare
 				program = []uint8{tt.opcode, addrArgLow, addrArgHigh, 0x00}
 				effectiveAddr = tt.memAddr + uint16(cpu.Y)
 				bus.Write(effectiveAddr, tt.operandValue)
-			case izxPtr: // Only CMP uses this for compare
+			case AddrModeIZX: // Only CMP uses this for compare
 				program = []uint8{tt.opcode, addrArgLow, 0x00}
 				zpLookupAddr := (uint16(addrArgLow) + uint16(cpu.X)) & 0xFF
 				targetAddr := uint16(0xBEEF) // Dummy target address
 				bus.Write(zpLookupAddr, uint8(targetAddr&0xFF))
 				bus.Write((zpLookupAddr+1)&0xFF, uint8(targetAddr>>8))
 				bus.Write(targetAddr, tt.operandValue)
-			case izyPtr: // Only CMP uses this for compare
+			case AddrModeIZY: // Only CMP uses this for compare
 				program = []uint8{tt.opcode, addrArgLow, 0x00}
 				baseAddrLow := uint16(addrArgLow)
 				baseTarget := uint16(0xC000) // Dummy base address
@@ -2943,7 +2921,7 @@ func BenchmarkSingleInstruction(b *testing.B) {
 		{"STA_ABS", []uint8{0x8D, 0x00, 0x30, 0x00}, 4},
 		{"ADC_IMM", []uint8{0x69, 0x10, 0x00}, 2},
 		{"JMP_ABS", []uint8{0x4C, 0x00, 0x80, 0x00}, 3},
-		{"BNE_REL", []uint8{0xD0, 0xFE, 0x00}, 2}, // Branch not taken
+		{"BNE_REL", []uint8{0xD0, 0xFE, 0x00}, 2},                         // Branch not taken
 		{"JSR_RTS", []uint8{0x20, 0x05, 0x80, 0x00, 0x00, 0x60, 0x00}, 6}, // JSR + RTS
 	}
 
@@ -2991,7 +2969,7 @@ func BenchmarkMemoryAccess(b *testing.B) {
 		name    string
 		program []uint8
 	}{
-		{"ZeroPage", []uint8{0xA5, 0x10, 0x00}},     // LDA $10
+		{"ZeroPage", []uint8{0xA5, 0x10, 0x00}},       // LDA $10
 		{"Absolute", []uint8{0xAD, 0x00, 0x30, 0x00}}, // LDA $3000
 		{"Indexed", []uint8{0xBD, 0x00, 0x30, 0x00}},  // LDA $3000,X
 		{"Indirect", []uint8{0xB1, 0x10, 0x00}},       // LDA ($10),Y
@@ -3119,14 +3097,14 @@ func BenchmarkStackOperations(b *testing.B) {
 func BenchmarkCompleteProgram(b *testing.B) {
 	// Simple program: Load value, add 1, store result, loop
 	program := []uint8{
-		0xA9, 0x00,       // LDA #$00
+		0xA9, 0x00, // LDA #$00
 		0x8D, 0x00, 0x30, // STA $3000
 		0xAD, 0x00, 0x30, // LDA $3000  ; Loop start
-		0x69, 0x01,       // ADC #$01
+		0x69, 0x01, // ADC #$01
 		0x8D, 0x00, 0x30, // STA $3000
-		0xC9, 0x10,       // CMP #$10
-		0xD0, 0xF5,       // BNE Loop (branch back to LDA $3000)
-		0x00,             // BRK
+		0xC9, 0x10, // CMP #$10
+		0xD0, 0xF5, // BNE Loop (branch back to LDA $3000)
+		0x00, // BRK
 	}
 
 	b.Run("CounterLoop", func(b *testing.B) {
@@ -3139,7 +3117,7 @@ func BenchmarkCompleteProgram(b *testing.B) {
 			cpu.Cycles = 0
 			cpu.A = 0
 			cpu.P = U | I
-			bus.Write(0x3000, 0x00) // Reset memory
+			bus.Write(0x3000, 0x00)     // Reset memory
 			runUntilBrk(cpu, bus, 1000) // Allow enough cycles for completion
 		}
 	})
