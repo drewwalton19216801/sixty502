@@ -1554,11 +1554,25 @@ func (c *CPU) Clock() error {
 
 		// Normal instruction fetch
 		c.opcode = c.read(c.PC)
+		fetchPC := c.PC // Save PC for cache lookup
 		c.PC++
 
 		c.setFlag(U, true) // Ensure U is always set before execution
 
-		c.currentInstruction = &c.lookup[c.opcode]
+		// Try cache lookup first
+		if c.instrCache != nil {
+			if instr, hit := c.instrCache.Lookup(fetchPC, c.opcode); hit {
+				c.currentInstruction = instr
+			} else {
+				// Cache miss - use lookup table
+				c.currentInstruction = &c.lookup[c.opcode]
+				// Store in cache for next time
+				c.instrCache.Store(fetchPC, c.opcode, c.currentInstruction)
+			}
+		} else {
+			// Cache disabled
+			c.currentInstruction = &c.lookup[c.opcode]
+		}
 
 		// Check for illegal opcodes
 		if c.currentInstruction.Illegal {
