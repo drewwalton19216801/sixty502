@@ -275,6 +275,42 @@ The emulator is designed for accuracy over raw speed, but still provides good pe
 - Minimal memory allocations during execution
 - Suitable for real-time emulation of 6502-based systems
 
+### Instruction Cache
+
+An optional instruction cache optimizes repeated instruction fetches in tight loops:
+
+```go
+// Cache is enabled by default
+cpu := cpu6502.NewCPU(bus)
+
+// Disable cache via configuration
+config := cpu6502.DefaultConfig()
+config.EnableInstructionCache = false
+cpu := cpu6502.NewCPUWithConfig(bus, config)
+
+// Or via builder
+cpu := cpu6502.NewBuilder(bus).
+    DisableInstructionCache().
+    Build()
+
+// Runtime control
+cpu.DisableInstructionCache()
+cpu.EnableInstructionCache()
+cpu.InvalidateInstructionCache() // Clear cache after self-modifying code
+
+// Get cache statistics
+hits, misses, hitRate := cpu.InstructionCacheStats()
+fmt.Printf("Cache hit rate: %.2f%%\n", hitRate*100)
+```
+
+The cache provides:
+
+- **High hit rates** on tight loops (90%+ typical)
+- **Direct-mapped design** with 256 entries
+- **Transparent operation** - no behavioral changes
+- **Statistics tracking** for performance analysis
+- **Invalidation support** for self-modifying code
+
 ## Compatibility
 
 This emulator accurately emulates multiple 6502 variants:

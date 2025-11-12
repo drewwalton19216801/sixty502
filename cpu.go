@@ -159,15 +159,23 @@ type CPUConfig struct {
 
 	// EnableDecimalMode allows disabling decimal mode even on variants that support it
 	EnableDecimalMode bool
+
+	// EnableInstructionCache enables instruction caching for performance
+	EnableInstructionCache bool
+
+	// InstructionCacheSize sets the cache size (default: 256 entries)
+	InstructionCacheSize int
 }
 
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() CPUConfig {
 	return CPUConfig{
-		Variant:           VariantNMOS6502,
-		ErrorHandler:      &LoggingErrorHandler{Logger: log.Default()},
-		StrictMode:        false,
-		EnableDecimalMode: true,
+		Variant:                VariantNMOS6502,
+		ErrorHandler:           &LoggingErrorHandler{Logger: log.Default()},
+		StrictMode:             false,
+		EnableDecimalMode:      true,
+		EnableInstructionCache: true,
+		InstructionCacheSize:   256,
 	}
 }
 
@@ -184,6 +192,68 @@ const (
 	V Flags = 1 << 6 // Overflow
 	N Flags = 1 << 7 // Negative
 )
+
+// InstructionCacheEntry represents a cached instruction
+type InstructionCacheEntry struct {
+	opcode      uint8
+	instruction *Instruction
+	valid       bool
+}
+
+// InstructionCache provides fast lookup for recently executed instructions
+type InstructionCache struct {
+	entries [256]InstructionCacheEntry // Direct-mapped cache
+	hits    uint64
+	misses  uint64
+}
+
+// NewInstructionCache creates a new instruction cache
+func NewInstructionCache() *InstructionCache {
+	return &InstructionCache{}
+}
+
+// Lookup attempts to find an instruction in the cache
+func (ic *InstructionCache) Lookup(pc uint16, opcode uint8) (*Instruction, bool) {
+	index := uint8(pc & 0xFF) // Use low byte of PC as cache index
+	entry := &ic.entries[index]
+
+	if entry.valid && entry.opcode == opcode {
+		ic.hits++
+		return entry.instruction, true
+	}
+
+	ic.misses++
+	return nil, false
+}
+
+// Store adds an instruction to the cache
+func (ic *InstructionCache) Store(pc uint16, opcode uint8, instruction *Instruction) {
+	index := uint8(pc & 0xFF)
+	ic.entries[index] = InstructionCacheEntry{
+		opcode:      opcode,
+		instruction: instruction,
+		valid:       true,
+	}
+}
+
+// Invalidate clears the cache (e.g., after self-modifying code)
+func (ic *InstructionCache) Invalidate() {
+	for i := range ic.entries {
+		ic.entries[i].valid = false
+	}
+	// Reset statistics
+	ic.hits = 0
+	ic.misses = 0
+}
+
+// Stats returns cache statistics
+func (ic *InstructionCache) Stats() (hits, misses uint64, hitRate float64) {
+	total := ic.hits + ic.misses
+	if total == 0 {
+		return 0, 0, 0.0
+	}
+	return ic.hits, ic.misses, float64(ic.hits) / float64(total)
+}
 
 // CPU struct
 type CPU struct {
@@ -226,6 +296,9 @@ type CPU struct {
 	nmiPending      bool   // NMI edge detected and pending
 	inInterrupt     bool   // Currently handling an interrupt
 	interruptVector uint16 // Vector being used for current interrupt
+
+	// Performance optimization
+	instrCache *InstructionCache
 }
 
 // Instruction struct: Use method expressions for types
@@ -283,6 +356,11 @@ func NewCPUWithConfig(bus Bus, config CPUConfig) *CPU {
 		errorHandler: errorHandler,
 	}
 
+	// Initialize instruction cache if enabled
+	if config.EnableInstructionCache {
+		c.instrCache = NewInstructionCache()
+	}
+
 	c.buildLookupTable()
 
 	// Apply decimal mode configuration
@@ -328,6 +406,18 @@ func (b *CPUBuilder) WithErrorHandler(handler ErrorHandler) *CPUBuilder {
 // DisableDecimalMode disables decimal mode
 func (b *CPUBuilder) DisableDecimalMode() *CPUBuilder {
 	b.config.EnableDecimalMode = false
+	return b
+}
+
+// DisableInstructionCache disables the instruction cache
+func (b *CPUBuilder) DisableInstructionCache() *CPUBuilder {
+	b.config.EnableInstructionCache = false
+	return b
+}
+
+// WithInstructionCacheSize sets the instruction cache size
+func (b *CPUBuilder) WithInstructionCacheSize(size int) *CPUBuilder {
+	b.config.InstructionCacheSize = size
 	return b
 }
 
@@ -1491,11 +1581,25 @@ func (c *CPU) Clock() error {
 
 		// Normal instruction fetch
 		c.opcode = c.read(c.PC)
+		fetchPC := c.PC // Save PC for cache lookup
 		c.PC++
 
 		c.setFlag(U, true) // Ensure U is always set before execution
 
-		c.currentInstruction = &c.lookup[c.opcode]
+		// Try cache lookup first
+		if c.instrCache != nil {
+			if instr, hit := c.instrCache.Lookup(fetchPC, c.opcode); hit {
+				c.currentInstruction = instr
+			} else {
+				// Cache miss - use lookup table
+				c.currentInstruction = &c.lookup[c.opcode]
+				// Store in cache for next time
+				c.instrCache.Store(fetchPC, c.opcode, c.currentInstruction)
+			}
+		} else {
+			// Cache disabled
+			c.currentInstruction = &c.lookup[c.opcode]
+		}
 
 		// Check for illegal opcodes
 		if c.currentInstruction.Illegal {
@@ -1569,6 +1673,36 @@ func (c *CPU) LookupInstruction(opcode uint8) Instruction {
 // IsIllegalOpcode returns true if the given opcode is illegal/unofficial
 func (c *CPU) IsIllegalOpcode(opcode uint8) bool {
 	return c.lookup[opcode].Illegal
+}
+
+// --- Instruction Cache Control ---
+
+// InvalidateInstructionCache clears the instruction cache
+// Call this after self-modifying code or when loading new programs
+func (c *CPU) InvalidateInstructionCache() {
+	if c.instrCache != nil {
+		c.instrCache.Invalidate()
+	}
+}
+
+// InstructionCacheStats returns cache performance statistics
+func (c *CPU) InstructionCacheStats() (hits, misses uint64, hitRate float64) {
+	if c.instrCache != nil {
+		return c.instrCache.Stats()
+	}
+	return 0, 0, 0.0
+}
+
+// DisableInstructionCache disables the instruction cache
+func (c *CPU) DisableInstructionCache() {
+	c.instrCache = nil
+}
+
+// EnableInstructionCache enables the instruction cache
+func (c *CPU) EnableInstructionCache() {
+	if c.instrCache == nil {
+		c.instrCache = NewInstructionCache()
+	}
 }
 
 // --- State Inspection ---
