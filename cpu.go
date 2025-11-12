@@ -241,6 +241,9 @@ func (ic *InstructionCache) Invalidate() {
 	for i := range ic.entries {
 		ic.entries[i].valid = false
 	}
+	// Reset statistics
+	ic.hits = 0
+	ic.misses = 0
 }
 
 // Stats returns cache statistics
