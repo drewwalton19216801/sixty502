@@ -738,11 +738,6 @@ func (c *CPU) BRK() uint8 {
 	return 0
 }
 
-func (c *CPU) CLC() uint8 { c.setFlag(C, false); return 0 }
-func (c *CPU) CLD() uint8 { c.setFlag(D, false); return 0 }
-func (c *CPU) CLI() uint8 { c.setFlag(I, false); return 0 }
-func (c *CPU) CLV() uint8 { c.setFlag(V, false); return 0 }
-
 func (c *CPU) CMP() uint8 {
 	c.fetchDataIfNeeded()
 	temp := uint16(c.A) - uint16(c.fetchedData)
@@ -1031,10 +1026,6 @@ func (c *CPU) sbcDecimal() uint8 {
 
 	return 0
 }
-
-func (c *CPU) SEC() uint8 { c.setFlag(C, true); return 0 }
-func (c *CPU) SED() uint8 { c.setFlag(D, true); return 0 }
-func (c *CPU) SEI() uint8 { c.setFlag(I, true); return 0 }
 
 func (c *CPU) STA() uint8 {
 	c.write(c.addrAbs, c.A)
