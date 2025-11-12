@@ -396,3 +396,232 @@ func TestVariantNVFlagsInDecimalMode(t *testing.T) {
 		})
 	}
 }
+
+// TestRORQuirk tests the ROR hardware quirk across variants
+func TestRORQuirk(t *testing.T) {
+	variants := []struct {
+		variant  CPUVariant
+		hasQuirk bool
+	}{
+		{VariantNMOS6502, false},    // Rev B and later - ROR works correctly
+		{VariantNMOS6502RevA, true}, // Rev A - has the quirk
+		{VariantCMOS65C02, false},   // CMOS - ROR works correctly
+		{VariantRicoh2A03, false},   // Ricoh - ROR works correctly
+		{VariantRicoh2A07, false},   // Ricoh PAL - ROR works correctly
+	}
+
+	tests := []struct {
+		name                string
+		opcode              uint8
+		addrMode            string
+		initialValue        uint8
+		initialCarry        bool
+		expectedNormal      uint8 // Expected result for normal ROR
+		expectedQuirk       uint8 // Expected result for quirky ROR (ASL-like)
+		expectedCarryNormal bool
+		expectedCarryQuirk  bool // Carry should NOT change in quirk mode
+	}{
+		// Accumulator mode tests
+		{"ACC C=0 0x84", 0x6A, "IMP", 0x84, false, 0x42, 0x08, false, false},
+		{"ACC C=1 0x84", 0x6A, "IMP", 0x84, true, 0xC2, 0x08, false, true},
+		{"ACC C=0 0x01", 0x6A, "IMP", 0x01, false, 0x00, 0x02, true, false},
+		{"ACC C=1 0x01", 0x6A, "IMP", 0x01, true, 0x80, 0x02, true, true},
+		{"ACC C=0 0x00", 0x6A, "IMP", 0x00, false, 0x00, 0x00, false, false},
+		{"ACC C=1 0x00", 0x6A, "IMP", 0x00, true, 0x80, 0x00, false, true},
+		{"ACC C=0 0xFF", 0x6A, "IMP", 0xFF, false, 0x7F, 0xFE, true, false},
+		{"ACC C=1 0xFF", 0x6A, "IMP", 0xFF, true, 0xFF, 0xFE, true, true},
+		{"ACC C=0 0x80", 0x6A, "IMP", 0x80, false, 0x40, 0x00, false, false},
+		{"ACC C=1 0x80", 0x6A, "IMP", 0x80, true, 0xC0, 0x00, false, true},
+
+		// Zero Page mode tests
+		{"ZP0 C=0 0x22", 0x66, "ZP0", 0x22, false, 0x11, 0x44, false, false},
+		{"ZP0 C=1 0x22", 0x66, "ZP0", 0x22, true, 0x91, 0x44, false, true},
+		{"ZP0 C=0 0xAA", 0x66, "ZP0", 0xAA, false, 0x55, 0x54, false, false},
+		{"ZP0 C=1 0xAA", 0x66, "ZP0", 0xAA, true, 0xD5, 0x54, false, true},
+	}
+
+	for _, vt := range variants {
+		for _, tt := range tests {
+			t.Run(vt.variant.String()+" "+tt.name, func(t *testing.T) {
+				cpu, bus := setupCPUWithVariant(vt.variant)
+
+				var program []uint8
+				var memAddr uint16 = 0x0035
+
+				if tt.addrMode == "IMP" {
+					// Accumulator mode
+					cpu.A = tt.initialValue
+					program = []uint8{tt.opcode, 0x00} // ROR A, BRK
+				} else if tt.addrMode == "ZP0" {
+					// Zero Page mode
+					bus.Write(memAddr, tt.initialValue)
+					program = []uint8{tt.opcode, uint8(memAddr), 0x00} // ROR $35, BRK
+				}
+
+				cpu.setFlag(C, tt.initialCarry)
+				baseAddr := uint16(0x8000)
+				bus.load(baseAddr, program)
+				cpu.PC = baseAddr
+				cpu.SetCycles(0)
+
+				// Run the instruction
+				if tt.addrMode == "IMP" {
+					runCycles(cpu, 2)
+				} else {
+					runCycles(cpu, 5)
+				}
+
+				// Check results based on variant
+				var expectedValue uint8
+				var expectedCarry bool
+				if vt.hasQuirk {
+					expectedValue = tt.expectedQuirk
+					expectedCarry = tt.expectedCarryQuirk
+				} else {
+					expectedValue = tt.expectedNormal
+					expectedCarry = tt.expectedCarryNormal
+				}
+
+				var actualValue uint8
+				if tt.addrMode == "IMP" {
+					actualValue = cpu.A
+				} else {
+					actualValue = bus.Read(memAddr)
+				}
+
+				if actualValue != expectedValue {
+					t.Errorf("%s: Expected value=$%02X, got value=$%02X",
+						vt.variant.String(), expectedValue, actualValue)
+				}
+
+				if cpu.getFlag(C) != expectedCarry {
+					t.Errorf("%s: Expected C=%v, got C=%v",
+						vt.variant.String(), expectedCarry, cpu.getFlag(C))
+				}
+
+				// Check Z flag
+				expectedZ := (expectedValue == 0)
+				if cpu.getFlag(Z) != expectedZ {
+					t.Errorf("%s: Expected Z=%v, got Z=%v",
+						vt.variant.String(), expectedZ, cpu.getFlag(Z))
+				}
+
+				// Check N flag
+				expectedN := (expectedValue & 0x80) != 0
+				if cpu.getFlag(N) != expectedN {
+					t.Errorf("%s: Expected N=%v, got N=%v",
+						vt.variant.String(), expectedN, cpu.getFlag(N))
+				}
+			})
+		}
+	}
+}
+
+// TestRORQuirkAllAddressingModes tests ROR quirk with all addressing modes
+func TestRORQuirkAllAddressingModes(t *testing.T) {
+	// Test with Rev A (has quirk)
+	cpu, bus := setupCPUWithVariant(VariantNMOS6502RevA)
+
+	tests := []struct {
+		name     string
+		opcode   uint8
+		setup    func()
+		cycles   uint
+		checkVal func() uint8
+	}{
+		{
+			name:   "ROR Accumulator",
+			opcode: 0x6A,
+			setup: func() {
+				cpu.A = 0x42
+				cpu.setFlag(C, false)
+			},
+			cycles:   2,
+			checkVal: func() uint8 { return cpu.A },
+		},
+		{
+			name:   "ROR Zero Page",
+			opcode: 0x66,
+			setup: func() {
+				bus.Write(0x0050, 0x42)
+				cpu.setFlag(C, false)
+			},
+			cycles:   5,
+			checkVal: func() uint8 { return bus.Read(0x0050) },
+		},
+		{
+			name:   "ROR Zero Page,X",
+			opcode: 0x76,
+			setup: func() {
+				cpu.X = 0x10
+				bus.Write(0x0060, 0x42)
+				cpu.setFlag(C, false)
+			},
+			cycles:   6,
+			checkVal: func() uint8 { return bus.Read(0x0060) },
+		},
+		{
+			name:   "ROR Absolute",
+			opcode: 0x6E,
+			setup: func() {
+				bus.Write(0x1234, 0x42)
+				cpu.setFlag(C, false)
+			},
+			cycles:   6,
+			checkVal: func() uint8 { return bus.Read(0x1234) },
+		},
+		{
+			name:   "ROR Absolute,X",
+			opcode: 0x7E,
+			setup: func() {
+				cpu.X = 0x10
+				bus.Write(0x1244, 0x42)
+				cpu.setFlag(C, false)
+			},
+			cycles:   7,
+			checkVal: func() uint8 { return bus.Read(0x1244) },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cpu.Reset()
+			tt.setup()
+
+			var program []uint8
+			baseAddr := uint16(0x8000)
+
+			switch tt.opcode {
+			case 0x6A: // IMP
+				program = []uint8{tt.opcode, 0x00}
+			case 0x66: // ZP0
+				program = []uint8{tt.opcode, 0x50, 0x00}
+			case 0x76: // ZPX
+				program = []uint8{tt.opcode, 0x50, 0x00}
+			case 0x6E: // ABS
+				program = []uint8{tt.opcode, 0x34, 0x12, 0x00}
+			case 0x7E: // ABX
+				program = []uint8{tt.opcode, 0x34, 0x12, 0x00}
+			}
+
+			bus.load(baseAddr, program)
+			cpu.PC = baseAddr
+			cpu.SetCycles(0)
+
+			runCycles(cpu, tt.cycles)
+
+			// For Rev A, ROR behaves like ASL: 0x42 << 1 = 0x84
+			expected := uint8(0x84)
+			actual := tt.checkVal()
+
+			if actual != expected {
+				t.Errorf("Expected $%02X, got $%02X", expected, actual)
+			}
+
+			// Carry should NOT be modified in quirk mode
+			if cpu.getFlag(C) != false {
+				t.Errorf("Expected C=false (unchanged), got C=%v", cpu.getFlag(C))
+			}
+		})
+	}
+}

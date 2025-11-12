@@ -47,7 +47,14 @@ const (
 	// VariantNMOS6502 is the original NMOS 6502 (1975)
 	// Used in: Apple II, Commodore 64, Atari 2600/800, BBC Micro
 	// Features: All documented bugs, decimal mode supported
+	// Note: This represents Rev B and later which have working ROR
 	VariantNMOS6502 CPUVariant = iota
+
+	// VariantNMOS6502RevA is the original Rev A NMOS 6502
+	// This early revision had a hardware bug where ROR was not implemented
+	// and performed a modified ROL operation instead
+	// Features: ROR quirk, all other NMOS bugs, decimal mode supported
+	VariantNMOS6502RevA
 
 	// VariantCMOS65C02 is the CMOS 65C02 (1982)
 	// Used in: Apple IIc, Apple IIe (enhanced), later systems
@@ -68,6 +75,7 @@ const (
 func (v CPUVariant) String() string {
 	names := []string{
 		"NMOS 6502",
+		"NMOS 6502 Rev A",
 		"CMOS 65C02",
 		"Ricoh 2A03 (NTSC)",
 		"Ricoh 2A07 (PAL)",
@@ -91,12 +99,27 @@ func (v CPUVariant) SupportsDecimalMode() bool {
 // HasIndirectJMPBug returns true if the variant has the indirect JMP page boundary bug
 func (v CPUVariant) HasIndirectJMPBug() bool {
 	switch v {
-	case VariantNMOS6502, VariantRicoh2A03, VariantRicoh2A07:
+	case VariantNMOS6502, VariantNMOS6502RevA, VariantRicoh2A03, VariantRicoh2A07:
 		return true
 	case VariantCMOS65C02:
 		return false
 	default:
 		return true
+	}
+}
+
+// HasRORQuirk returns true if the variant has the ROR hardware bug.
+// Only the original Rev A NMOS 6502 had this quirk where ROR didn't have
+// proper circuitry and performed a modified ROL operation instead.
+// This was fixed in Rev B and was never present in Ricoh or CMOS variants.
+func (v CPUVariant) HasRORQuirk() bool {
+	switch v {
+	case VariantNMOS6502RevA:
+		return true
+	case VariantNMOS6502, VariantCMOS65C02, VariantRicoh2A03, VariantRicoh2A07:
+		return false
+	default:
+		return false // Conservative: assume no quirk for unknown variants
 	}
 }
 
