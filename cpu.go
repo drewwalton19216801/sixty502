@@ -1648,6 +1648,36 @@ func (c *CPU) IsIllegalOpcode(opcode uint8) bool {
 	return c.lookup[opcode].Illegal
 }
 
+// --- Instruction Cache Control ---
+
+// InvalidateInstructionCache clears the instruction cache
+// Call this after self-modifying code or when loading new programs
+func (c *CPU) InvalidateInstructionCache() {
+	if c.instrCache != nil {
+		c.instrCache.Invalidate()
+	}
+}
+
+// InstructionCacheStats returns cache performance statistics
+func (c *CPU) InstructionCacheStats() (hits, misses uint64, hitRate float64) {
+	if c.instrCache != nil {
+		return c.instrCache.Stats()
+	}
+	return 0, 0, 0.0
+}
+
+// DisableInstructionCache disables the instruction cache
+func (c *CPU) DisableInstructionCache() {
+	c.instrCache = nil
+}
+
+// EnableInstructionCache enables the instruction cache
+func (c *CPU) EnableInstructionCache() {
+	if c.instrCache == nil {
+		c.instrCache = NewInstructionCache()
+	}
+}
+
 // --- State Inspection ---
 
 // State represents a snapshot of CPU state
