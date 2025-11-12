@@ -3,7 +3,6 @@ package cpu6502
 import (
 	"fmt"
 	"log"
-	"reflect" // Import reflect package
 )
 
 // AddrModeType represents the addressing mode of an instruction
@@ -286,11 +285,6 @@ func (c *CPU) IZY() uint8 {
 // --- Instruction Operations (Stubs) ---
 // All operate functions remain the same method signatures:
 // func (c *CPU) OpName() uint8 { ... }
-
-// Helper function using reflect for comparison
-func getFuncPtr(f any) uintptr {
-	return reflect.ValueOf(f).Pointer()
-}
 
 // fetchDataIfNeeded - Fetch data if not in implied mode
 func (c *CPU) fetchDataIfNeeded() {
