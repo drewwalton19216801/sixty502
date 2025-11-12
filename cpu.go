@@ -30,33 +30,6 @@ import (
 	"log"
 )
 
-// Bus defines the interface for memory access.
-//
-// Implementations of this interface provide the CPU with access to
-// memory and memory-mapped I/O. The interface is intentionally simple
-// to allow for flexible implementations.
-//
-// Example implementation:
-//
-//	type SimpleBus struct {
-//	    ram [65536]uint8
-//	}
-//
-//	func (b *SimpleBus) Read(addr uint16) uint8 {
-//	    return b.ram[addr]
-//	}
-//
-//	func (b *SimpleBus) Write(addr uint16, data uint8) {
-//	    b.ram[addr] = data
-//	}
-type Bus interface {
-	// Read returns the byte at the specified address.
-	Read(addr uint16) uint8
-
-	// Write stores a byte at the specified address.
-	Write(addr uint16, data uint8)
-}
-
 // CPUConfig holds configuration options for CPU creation
 type CPUConfig struct {
 	// Variant specifies the CPU variant (NMOS, CMOS, Ricoh)
