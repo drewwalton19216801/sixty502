@@ -55,7 +55,7 @@ func runCycles(cpu *CPU, cyclesToRun uint) uint64 {
 		// Check if CPU is stuck (e.g., on an unimplemented BRK or infinite loop)
 		// Use Peek instruction definition safely
 		nextOpcode := cpu.read(cpu.PC)
-		if cpu.Cycles == 0 && cpu.lookup[nextOpcode].Operate == nil {
+		if cpu.RemainingCycles() == 0 && cpu.lookup[nextOpcode].Operate == nil {
 			// Check for explicit XXX or unimplemented operate func
 			fmt.Printf("Warning: CPU potentially stuck at PC=0x%04X, Opcode=0x%02X (%s)\n", cpu.PC, nextOpcode, cpu.lookup[nextOpcode].Name)
 			break // Avoid infinite loop in test
@@ -209,8 +209,8 @@ func TestReset(t *testing.T) {
 	checkFlags(t, "TestReset", cpu, expectedFlags)
 
 	// Reset should take cycles (nominally 8)
-	if cpu.Cycles != 8 {
-		t.Errorf("Reset() failed: Expected cycles remaining 8, got %d", cpu.Cycles)
+	if cpu.RemainingCycles() != 8 {
+		t.Errorf("Reset() failed: Expected cycles remaining 8, got %d", cpu.RemainingCycles())
 	}
 }
 
@@ -240,7 +240,7 @@ func TestFlagsInstructions(t *testing.T) {
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
 			cpu.P = tt.initialP // Set initial flags
-			cpu.Cycles = 0      // Start execution immediately
+			cpu.SetCycles(0)    // Start execution immediately
 
 			cyclesRun := runCycles(cpu, tt.expectedCycles) // Run the flag instruction
 			if cyclesRun != uint64(tt.expectedCycles) {
@@ -362,7 +362,7 @@ func TestLDA(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0 // Start execution immediately
+			cpu.SetCycles(0) // Start execution immediately
 
 			runUntilBrk(cpu, bus, 20) // Allow enough cycles
 
@@ -439,7 +439,7 @@ func TestLDX(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0 // Start execution immediately
+			cpu.SetCycles(0) // Start execution immediately
 
 			runUntilBrk(cpu, bus, 20) // Allow enough cycles
 
@@ -516,7 +516,7 @@ func TestLDY(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0 // Start execution immediately
+			cpu.SetCycles(0) // Start execution immediately
 
 			runUntilBrk(cpu, bus, 20) // Allow enough cycles
 
@@ -609,7 +609,7 @@ func TestSTA(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runUntilBrk(cpu, bus, 20)
 
@@ -662,7 +662,7 @@ func TestSTX(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runUntilBrk(cpu, bus, 20)
 
@@ -715,7 +715,7 @@ func TestSTY(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runUntilBrk(cpu, bus, 20)
 
@@ -989,7 +989,7 @@ func TestNopInstructions(t *testing.T) {
 			program = append(program, 0x00) // BRK for safety
 
 			bus.load(initialPC, program)
-			cpu.Cycles = 0 // Start execution immediately
+			cpu.SetCycles(0) // Start execution immediately
 
 			// Execute the instruction by running the expected number of cycles
 			cyclesRun := runCycles(cpu, tt.expectedCycles)
@@ -1165,7 +1165,7 @@ func TestRegisterTransfers(t *testing.T) {
 
 			bus.load(startAddr, tt.program)
 			cpu.PC = startAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			runCycles(cpu, tt.cycles) // Run for the instruction cycles
 
@@ -1187,7 +1187,7 @@ func TestStackOperations(t *testing.T) {
 		program := []uint8{0x48, 0x00} // PHA, BRK
 		bus.load(startAddr, program)
 		cpu.PC = startAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		cpu.SP = initialSP
 
 		runUntilBrk(cpu, bus, 10)
@@ -1209,7 +1209,7 @@ func TestStackOperations(t *testing.T) {
 		program := []uint8{0x68, 0x00} // PLA, BRK
 		bus.load(startAddr, program)
 		cpu.PC = startAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		cpu.SP = initialSP - 1 // SP points to the last used location *before* pull
 
 		runUntilBrk(cpu, bus, 10)
@@ -1239,7 +1239,7 @@ func TestStackOperations(t *testing.T) {
 		program := []uint8{0x08, 0x00}   // PHP, BRK
 		bus.load(startAddr, program)
 		cpu.PC = startAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		cpu.SP = initialSP
 
 		runUntilBrk(cpu, bus, 10)
@@ -1271,7 +1271,7 @@ func TestStackOperations(t *testing.T) {
 		program := []uint8{0x28, 0x00} // PLP, BRK
 		bus.load(startAddr, program)
 		cpu.PC = startAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		cpu.SP = initialSP - 1 // SP points to the last used location *before* pull
 		// Start with different flags to ensure they change
 		cpu.P = C | V | N | U // Ensure I is clear here
@@ -1442,7 +1442,7 @@ func TestBranchInstructions(t *testing.T) {
 			bus.Write(0xFFFD, 0xFF) // Point BRK vector somewhere harmless (e.g., $FF00)
 
 			// cpu.PC is already set
-			cpu.Cycles = 0 // Ensure instruction runs immediately
+			cpu.SetCycles(0) // Ensure instruction runs immediately
 
 			// Execute *exactly* the number of cycles this instruction should take
 			cyclesRun := runCycles(cpu, tt.expectedCycles)
@@ -1481,7 +1481,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		}
 		bus.load(baseAddr, program)
 		cpu.PC = baseAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		runCycles(cpu, 3) // JMP Absolute takes 3 cycles
 
@@ -1510,7 +1510,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		bus.Write(indirectVectorAddr+1, uint8(targetAddr>>8)) // $1001 = $EF (High byte)
 
 		cpu.PC = baseAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		runCycles(cpu, 5) // JMP Indirect takes 5 cycles
 
@@ -1543,7 +1543,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		bus.Write(indirectVectorAddr+1, 0xEE)                    // Write something different at the *correct* high byte loc ($1100) to ensure bug works
 
 		cpu.PC = baseAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		runCycles(cpu, 5) // JMP Indirect takes 5 cycles
 
@@ -1570,7 +1570,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		bus.Write(subroutineAddr, 0x00) // Put BRK at subroutine start for safety
 
 		cpu.PC = baseAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		runCycles(cpu, 6) // JSR takes 6 cycles
 
@@ -1619,7 +1619,7 @@ func TestJumpSubroutineInstructions(t *testing.T) {
 		bus.Write(expectedFinalPC, 0x00) // Put BRK at destination for safety
 
 		cpu.PC = rtsInstructionAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		runCycles(cpu, 6) // RTS takes 6 cycles
 
@@ -1685,7 +1685,7 @@ func TestLogicInstructions(t *testing.T) {
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, tt.cycles) // Use runCycles
 
 				// Assertions remain the same
@@ -1747,7 +1747,7 @@ func TestLogicInstructions(t *testing.T) {
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, tt.cycles) // Use runCycles
 
 				if cpu.A != tt.expectedA {
@@ -1808,7 +1808,7 @@ func TestLogicInstructions(t *testing.T) {
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, tt.cycles) // Use runCycles
 
 				if cpu.A != tt.expectedA {
@@ -1868,7 +1868,7 @@ func TestLogicInstructions(t *testing.T) {
 
 				bus.load(baseAddr, program)
 				cpu.PC = baseAddr
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, tt.cycles) // Use runCycles
 
 				// Assertions
@@ -2010,7 +2010,7 @@ func TestShiftRotateInstructions(t *testing.T) {
 
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			// --- Execution ---
 			runCycles(cpu, tt.cycles)
@@ -2073,7 +2073,7 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		cpu.P = originalFlags
 		program := []uint8{0x00} // BRK Opcode
 		bus.load(baseAddr, program)
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 
 		// Sanity check: Verify vectors immediately after setup, before running CPU
 		if bus.Read(0xFFFE) != 0x00 || bus.Read(0xFFFF) != 0xF2 {
@@ -2150,7 +2150,7 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		bus.Write(targetPC, 0x00)              // BRK at destination for safety
 
 		cpu.PC = rtiAddr
-		cpu.Cycles = 0
+		cpu.SetCycles(0)
 		runCycles(cpu, 6)
 
 		// Verification
@@ -2188,8 +2188,8 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		if cpu.SP != startingSP {
 			t.Errorf("IRQ (I=1) failed: SP changed. Expected 0x%02X, got 0x%02X", startingSP, cpu.SP)
 		}
-		if cpu.Cycles != 0 {
-			t.Errorf("IRQ (I=1) failed: cpu.Cycles was set (%d), expected 0", cpu.Cycles)
+		if cpu.RemainingCycles() != 0 {
+			t.Errorf("IRQ (I=1) failed: cpu.RemainingCycles() was set (%d), expected 0", cpu.RemainingCycles())
 		}
 	})
 
@@ -2250,8 +2250,8 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		}
 
 		// 5. Check cycle count
-		if cpu.Cycles != 7 {
-			t.Errorf("IRQ (I=0) failed: Expected cpu.Cycles=7, got %d", cpu.Cycles)
+		if cpu.RemainingCycles() != 7 {
+			t.Errorf("IRQ (I=0) failed: Expected cpu.RemainingCycles()=7, got %d", cpu.RemainingCycles())
 		}
 	})
 
@@ -2316,8 +2316,8 @@ func TestInterruptMiscInstructions(t *testing.T) {
 		}
 
 		// 5. Check cycle count
-		if cpu.Cycles != 8 {
-			t.Errorf("NMI (I=%v) failed: Expected cpu.Cycles=8, got %d", iFlag, cpu.Cycles)
+		if cpu.RemainingCycles() != 8 {
+			t.Errorf("NMI (I=%v) failed: Expected cpu.RemainingCycles()=8, got %d", iFlag, cpu.RemainingCycles())
 		}
 	}
 
@@ -2440,7 +2440,7 @@ func TestIncrementDecrement(t *testing.T) {
 
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			// --- Execution ---
 			runCycles(cpu, tt.cycles)
@@ -2603,7 +2603,7 @@ func TestCompareInstructions(t *testing.T) {
 
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			// --- Execution ---
 			// Add +1 cycle for indexed modes if page boundary is crossed
@@ -2775,7 +2775,7 @@ func TestADC(t *testing.T) {
 
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			// Execute
 			cyclesRun := runCycles(cpu, tt.cycles)
@@ -2896,7 +2896,7 @@ func TestSBC(t *testing.T) {
 
 			bus.load(baseAddr, program)
 			cpu.PC = baseAddr
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 
 			// Execute
 			cyclesRun := runCycles(cpu, tt.cycles)
@@ -2942,7 +2942,7 @@ func BenchmarkSingleInstruction(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cpu.PC = 0x8000
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, bm.cycles)
 			}
 		})
@@ -2966,7 +2966,7 @@ func BenchmarkCPUClock(b *testing.B) {
 		cpu.Clock()
 		if cpu.PC >= 0x80FF { // Reset if we hit BRK
 			cpu.PC = 0x8000
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 		}
 	}
 }
@@ -2998,7 +2998,7 @@ func BenchmarkMemoryAccess(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cpu.PC = 0x8000
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				runCycles(cpu, 4) // Max cycles for any of these instructions
 			}
 		})
@@ -3028,7 +3028,7 @@ func BenchmarkArithmetic(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cpu.PC = 0x8000
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				cpu.A = 0x42 // Reset accumulator
 				runCycles(cpu, 2)
 			}
@@ -3058,7 +3058,7 @@ func BenchmarkBranching(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cpu.PC = 0x8000
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				bm.setupFlags(cpu)
 				expectedCycles := uint(2)
 				if bm.taken {
@@ -3093,7 +3093,7 @@ func BenchmarkStackOperations(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				cpu.PC = 0x8000
-				cpu.Cycles = 0
+				cpu.SetCycles(0)
 				cpu.SP = 0xFD // Reset stack pointer
 				runCycles(cpu, bm.cycles)
 			}
@@ -3122,7 +3122,7 @@ func BenchmarkCompleteProgram(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			cpu.PC = 0x8000
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 			cpu.A = 0
 			cpu.P = U | I
 			bus.Write(0x3000, 0x00)     // Reset memory
@@ -3143,7 +3143,7 @@ func BenchmarkInterrupts(b *testing.B) {
 			cpu.PC = 0x8000
 			cpu.SP = 0xFD
 			cpu.P = U
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 			cpu.InterruptRequest() // Trigger interrupt
 		}
 	})
@@ -3157,7 +3157,7 @@ func BenchmarkInterrupts(b *testing.B) {
 			cpu.PC = 0x8000
 			cpu.SP = 0xFD
 			cpu.P = U | I
-			cpu.Cycles = 0
+			cpu.SetCycles(0)
 			cpu.NonMaskableInterrupt() // Trigger NMI
 		}
 	})
@@ -3172,7 +3172,7 @@ func TestIllegalOpcode(t *testing.T) {
 	// illegalOpcode := uint8(0x02) // Example KIL/JAM opcode
 	// bus.load(0x8000, []uint8{illegalOpcode})
 	// cpu.PC = 0x8000
-	// cpu.Cycles = 0
+	// cpu.SetCycles(0)
 	// // Running this might require a timeout or checking logs if XXX prints an error
 	// // Or, if XXX sets a specific "halted" state in the CPU struct.
 	// cpu.Clock() // Execute the illegal instruction

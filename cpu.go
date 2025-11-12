@@ -162,7 +162,7 @@ const (
 
 // CPU struct
 type CPU struct {
-	// Registers
+	// Registers (public for direct access)
 	A  uint8  // Accumulator
 	X  uint8  // X Index Register
 	Y  uint8  // Y Index Register
@@ -170,22 +170,22 @@ type CPU struct {
 	PC uint16 // Program Counter
 	P  Flags  // Processor Status Register (Flags)
 
-	// Bus connection
+	// Bus connection (public)
 	bus Bus
 
-	// Internal state for instruction execution
-	Cycles             uint8        // Cycles remaining for the current instruction
+	// PRIVATE: Internal state for instruction execution
+	cycles             uint8        // Cycles remaining for the current instruction (was: Cycles)
 	opcode             uint8        // Current opcode being executed
 	fetchedData        uint8        // Data fetched by addressing mode
 	addrAbs            uint16       // Absolute address calculated by addressing mode
 	addrRel            uint16       // Relative address (for branching) - stores absolute target address
 	currentInstruction *Instruction // Pointer to the definition of the current instruction
 
-	// Lookup table for instructions
-	lookup [256]Instruction
+	// PRIVATE: Lookup table for instructions
+	lookup [256]Instruction // (was: lookup - now private)
 
-	// Total cycles executed (for debugging/profiling)
-	totalCycles uint64
+	// PRIVATE: Total cycles executed (for debugging/profiling)
+	totalCycles uint64 // (was: totalCycles - now private)
 
 	// Error handling
 	errorHandler ErrorHandler
@@ -193,6 +193,14 @@ type CPU struct {
 
 	// Variant configuration
 	variant CPUVariant
+
+	// Interrupt state (for accurate interrupt timing)
+	irqLine         bool   // Current state of IRQ line
+	nmiLine         bool   // Current state of NMI line
+	nmiPrevious     bool   // Previous state of NMI line (for edge detection)
+	nmiPending      bool   // NMI edge detected and pending
+	inInterrupt     bool   // Currently handling an interrupt
+	interruptVector uint16 // Vector being used for current interrupt
 }
 
 // Instruction struct: Use method expressions for types
@@ -1228,7 +1236,7 @@ func (c *CPU) Reset() {
 	c.addrAbs = 0x0000
 	c.addrRel = 0x0000
 	c.fetchedData = 0x00
-	c.Cycles = 8
+	c.cycles = 8
 }
 
 // InterruptRequest
@@ -1253,7 +1261,7 @@ func (c *CPU) InterruptRequest() {
 		c.PC = (hi << 8) | lo
 
 		// Interrupts take time
-		c.Cycles = 7
+		c.cycles = 7
 	}
 }
 
@@ -1278,13 +1286,13 @@ func (c *CPU) NonMaskableInterrupt() {
 	c.PC = (hi << 8) | lo
 
 	// NMIs take time
-	c.Cycles = 8
+	c.cycles = 8
 }
 
 // Clock executes one clock cycle of the CPU
 // Returns an error if an unrecoverable error occurs
 func (c *CPU) Clock() error {
-	if c.Cycles == 0 {
+	if c.cycles == 0 {
 		c.opcode = c.read(c.PC)
 		c.PC++
 
@@ -1315,16 +1323,49 @@ func (c *CPU) Clock() error {
 		addrModeCycles := c.currentInstruction.AddrMode(c)
 		opCycles := c.currentInstruction.Operate(c)
 
-		c.Cycles = baseCycles + addrModeCycles + opCycles
+		c.cycles = baseCycles + addrModeCycles + opCycles
 
 		// Ensure U is set after execution as well (might be cleared by PLP?)
 		c.setFlag(U, true)
 
 	}
 
-	c.Cycles--
+	c.cycles--
 	c.totalCycles++
 	return nil
+}
+
+// --- Accessor Methods ---
+
+// RemainingCycles returns the number of cycles remaining for the current instruction
+func (c *CPU) RemainingCycles() uint8 {
+	return c.cycles
+}
+
+// SetCycles sets the number of cycles remaining (for testing/debugging)
+func (c *CPU) SetCycles(cycles uint8) {
+	c.cycles = cycles
+}
+
+// TotalCycles returns the total number of cycles executed by the CPU since its
+// creation. This is useful for profiling and debugging purposes.
+func (c *CPU) TotalCycles() uint64 {
+	return c.totalCycles
+}
+
+// CurrentOpcode returns the opcode of the currently executing instruction
+func (c *CPU) CurrentOpcode() uint8 {
+	return c.opcode
+}
+
+// LookupInstruction returns the instruction definition for a given opcode
+func (c *CPU) LookupInstruction(opcode uint8) Instruction {
+	return c.lookup[opcode]
+}
+
+// IsIllegalOpcode returns true if the given opcode is illegal/unofficial
+func (c *CPU) IsIllegalOpcode(opcode uint8) bool {
+	return c.lookup[opcode].Illegal
 }
 
 // --- Debug Helpers ---
@@ -1335,13 +1376,8 @@ func (c *CPU) GetCurrentInstruction() *Instruction {
 	return c.currentInstruction
 }
 
-// TotalCycles returns the total number of cycles executed by the CPU since its
-// creation. This is useful for profiling and debugging purposes.
-func (c *CPU) TotalCycles() uint64 {
-	return c.totalCycles
-}
-
 // Opcode returns the last fetched opcode. Useful for debugging/halt conditions.
+// Deprecated: Use CurrentOpcode() instead
 func (c *CPU) Opcode() uint8 {
 	return c.opcode
 }
