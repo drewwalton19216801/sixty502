@@ -111,12 +111,14 @@ Instructions are defined using method expressions for efficient dispatch:
 
 ```go
 type Instruction struct {
-    Name     string           // Mnemonic (e.g., "LDA")
-    Operate  func(*CPU) uint8 // Instruction logic
-    AddrMode func(*CPU) uint8 // Addressing mode calculation
-    Cycles   uint8            // Base cycle count
-    Length   uint8            // Instruction length in bytes
-    Illegal  bool             // Unofficial opcode flag
+    Name             string           // Mnemonic (e.g., "LDA")
+    Operate          func(*CPU) uint8 // Function to execute the instruction's logic (accepts *CPU)
+    AddrMode         func(*CPU) uint8 // Function to calculate the address and fetch data (accepts *CPU)
+    AddrModeType     AddrModeType     // Type of addressing mode
+    Cycles           uint8            // Base cycles for this instruction/mode
+    Length           uint8            // Length of the instruction in bytes
+    Illegal          bool             // Whether this is an official or unofficial/illegal opcode
+    PageCrossPenalty bool             // Whether to add +1 cycle on page boundary cross
 }
 ```
 
