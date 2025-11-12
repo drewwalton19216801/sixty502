@@ -641,13 +641,6 @@ func (c *CPU) adcDecimal(carry uint16) uint8 {
 	return 0
 }
 
-func (c *CPU) AND() uint8 {
-	c.fetchDataIfNeeded()
-	c.A &= c.fetchedData
-	c.setZNFlags(c.A)
-	return 0
-}
-
 // ASL - Arithmetic Shift Left
 func (c *CPU) ASL() uint8 {
 	var temp uint16
@@ -689,15 +682,6 @@ func (c *CPU) BNE() uint8 { return c.branchIf(!c.getFlag(Z)) }
 func (c *CPU) BPL() uint8 { return c.branchIf(!c.getFlag(N)) }
 func (c *CPU) BVC() uint8 { return c.branchIf(!c.getFlag(V)) }
 func (c *CPU) BVS() uint8 { return c.branchIf(c.getFlag(V)) }
-
-func (c *CPU) BIT() uint8 {
-	c.fetchDataIfNeeded()
-	temp := c.A & c.fetchedData
-	c.setFlag(Z, temp == 0)
-	c.setFlag(N, (c.fetchedData&(1<<7)) > 0)
-	c.setFlag(V, (c.fetchedData&(1<<6)) > 0)
-	return 0
-}
 
 func (c *CPU) BRK() uint8 {
 	// Note: PC is already incremented once by Clock() to point after the $00 opcode.
@@ -773,13 +757,6 @@ func (c *CPU) DEC() uint8 {
 func (c *CPU) DEX() uint8 { c.X--; c.setZNFlags(c.X); return 0 }
 func (c *CPU) DEY() uint8 { c.Y--; c.setZNFlags(c.Y); return 0 }
 
-func (c *CPU) EOR() uint8 {
-	c.fetchDataIfNeeded()
-	c.A ^= c.fetchedData
-	c.setZNFlags(c.A)
-	return 0
-}
-
 func (c *CPU) INC() uint8 {
 	c.fetchDataIfNeeded()
 	temp := c.fetchedData + 1
@@ -845,13 +822,6 @@ func (c *CPU) LSR() uint8 {
 // NOP - No Operation
 func (c *CPU) NOP() uint8 {
 	// Page cross handling is now done via PageCrossPenalty field in lookup table
-	return 0
-}
-
-func (c *CPU) ORA() uint8 {
-	c.fetchDataIfNeeded()
-	c.A |= c.fetchedData
-	c.setZNFlags(c.A)
 	return 0
 }
 
