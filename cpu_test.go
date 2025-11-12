@@ -60,7 +60,10 @@ func runCycles(cpu *CPU, cyclesToRun uint) uint64 {
 			fmt.Printf("Warning: CPU potentially stuck at PC=0x%04X, Opcode=0x%02X (%s)\n", cpu.PC, nextOpcode, cpu.lookup[nextOpcode].Name)
 			break // Avoid infinite loop in test
 		}
-		cpu.Clock()
+		if err := cpu.Clock(); err != nil {
+			fmt.Printf("Warning: CPU error during execution: %v\n", err)
+			break
+		}
 		// Add extra break condition if absolutely necessary
 		if cpu.totalCycles > targetTotalCycles+20 { // Safety break increased slightly
 			fmt.Printf("Warning: Exceeded target cycles significantly in runCycles (Target: %d, Current: %d). Stuck at PC=0x%04X Op=0x%02X\n",
@@ -94,10 +97,15 @@ func runUntilBrk(cpu *CPU, bus *MockBus, maxCycles uint64) uint64 {
 		// Note: This check happens *before* executing the BRK instruction itself.
 		// The Clock() call will execute the BRK if pc points to it.
 		if bus.Read(cpu.PC) == 0x00 {
-			cpu.Clock() // Execute the BRK
+			if err := cpu.Clock(); err != nil {
+				fmt.Printf("Warning: CPU error during BRK execution: %v\n", err)
+			}
 			break
 		}
-		cpu.Clock()
+		if err := cpu.Clock(); err != nil {
+			fmt.Printf("Warning: CPU error during execution: %v\n", err)
+			break
+		}
 	}
 	return cpu.totalCycles - initialCycles
 }
