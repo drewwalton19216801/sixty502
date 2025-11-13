@@ -192,6 +192,11 @@ go run main.go
   - Demonstrates writing to memory-mapped I/O ports
   - Example outputs "HELLO" via I/O port
 
+- **`examples/wozmon/`** - Demonstrates CPU and memory interaction
+  - Implements WozMon-like interface
+  - Demonstrates machine level programming
+  - Built-in demo counts to 16 and stops
+
 ### Creating Your Own Examples
 
 Use the examples as templates for your own programs:
