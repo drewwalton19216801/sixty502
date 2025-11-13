@@ -174,6 +174,10 @@ go run main.go
 # Memory-mapped I/O example
 cd examples/memory-mapped
 go run main.go
+
+# WozMon-like example
+cd examples/wozmon
+go run main.go
 ```
 
 ### Available Examples
