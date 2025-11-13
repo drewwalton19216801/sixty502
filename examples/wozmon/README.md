@@ -10,18 +10,12 @@ A command-line 6502 microprocessor emulator featuring a WozMon-like interface fo
 - Interactive REPL for memory examination and manipulation
 - CPU state inspection
 
-## Installation
-
-```bash
-go build
-```
-
 ## Usage
 
 Run the emulator:
 
 ```bash
-./sixtydemo
+go run main.go
 ```
 
 ## WozMon Commands
