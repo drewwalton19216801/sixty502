@@ -448,11 +448,12 @@ func TestRORQuirk(t *testing.T) {
 				var program []uint8
 				var memAddr uint16 = 0x0035
 
-				if tt.addrMode == "IMP" {
+				switch tt.addrMode {
+				case "IMP":
 					// Accumulator mode
 					cpu.A = tt.initialValue
 					program = []uint8{tt.opcode, 0x00} // ROR A, BRK
-				} else if tt.addrMode == "ZP0" {
+				case "ZP0":
 					// Zero Page mode
 					bus.Write(memAddr, tt.initialValue)
 					program = []uint8{tt.opcode, uint8(memAddr), 0x00} // ROR $35, BRK
