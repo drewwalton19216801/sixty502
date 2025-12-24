@@ -91,9 +91,6 @@ type CPU struct {
 	nmiPending      bool   // NMI edge detected and pending
 	inInterrupt     bool   // Currently handling an interrupt
 	interruptVector uint16 // Vector being used for current interrupt
-
-	// Performance optimization
-	instrCache *InstructionCache
 }
 
 // Variant returns the CPU variant
@@ -211,25 +208,12 @@ func (c *CPU) Clock() error {
 
 		// Normal instruction fetch
 		c.opcode = c.read(c.PC)
-		fetchPC := c.PC // Save PC for cache lookup
 		c.PC++
 
 		c.setFlag(U, true) // Ensure U is always set before execution
 
-		// Try cache lookup first
-		if c.instrCache != nil {
-			if instr, hit := c.instrCache.Lookup(fetchPC, c.opcode); hit {
-				c.currentInstruction = instr
-			} else {
-				// Cache miss - use lookup table
-				c.currentInstruction = &c.lookup[c.opcode]
-				// Store in cache for next time
-				c.instrCache.Store(fetchPC, c.opcode, c.currentInstruction)
-			}
-		} else {
-			// Cache disabled
-			c.currentInstruction = &c.lookup[c.opcode]
-		}
+		// Direct lookup table access
+		c.currentInstruction = &c.lookup[c.opcode]
 
 		// Check for illegal opcodes
 		if c.currentInstruction.Illegal {
@@ -270,36 +254,6 @@ func (c *CPU) Clock() error {
 	c.cycles--
 	c.totalCycles++
 	return nil
-}
-
-// --- Instruction Cache Control ---
-
-// InvalidateInstructionCache clears the instruction cache
-// Call this after self-modifying code or when loading new programs
-func (c *CPU) InvalidateInstructionCache() {
-	if c.instrCache != nil {
-		c.instrCache.Invalidate()
-	}
-}
-
-// InstructionCacheStats returns cache performance statistics
-func (c *CPU) InstructionCacheStats() (hits, misses uint64, hitRate float64) {
-	if c.instrCache != nil {
-		return c.instrCache.Stats()
-	}
-	return 0, 0, 0.0
-}
-
-// DisableInstructionCache disables the instruction cache
-func (c *CPU) DisableInstructionCache() {
-	c.instrCache = nil
-}
-
-// EnableInstructionCache enables the instruction cache
-func (c *CPU) EnableInstructionCache() {
-	if c.instrCache == nil {
-		c.instrCache = NewInstructionCache()
-	}
 }
 
 // --- Debug Helpers ---

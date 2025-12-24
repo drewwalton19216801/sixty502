@@ -21,9 +21,6 @@ func TestSelfModifyingCode(t *testing.T) {
 		cpu.PC = 0x8000
 		cpu.SetCycles(0)
 
-		// Invalidate cache before execution
-		cpu.InvalidateInstructionCache()
-
 		// Execute until BRK
 		runUntilBrk(cpu, bus, 50)
 
@@ -33,7 +30,7 @@ func TestSelfModifyingCode(t *testing.T) {
 		}
 	})
 
-	t.Run("Cache Invalidation", func(t *testing.T) {
+	t.Run("Modified Operand", func(t *testing.T) {
 		cpu, bus := setupCPU()
 
 		// Execute instruction from location
@@ -49,13 +46,10 @@ func TestSelfModifyingCode(t *testing.T) {
 			t.Errorf("First execution failed: expected A=$42, got A=$%02X", cpu.A)
 		}
 
-		// Modify the instruction
+		// Modify the instruction operand
 		bus.Write(0x8001, 0x99) // Change operand
 
-		// Invalidate cache
-		cpu.InvalidateInstructionCache()
-
-		// Execute again
+		// Execute again - should see new value
 		cpu.PC = 0x8000
 		cpu.SetCycles(0)
 		runCycles(cpu, 2)
@@ -65,10 +59,10 @@ func TestSelfModifyingCode(t *testing.T) {
 		}
 	})
 
-	t.Run("Cache Stats", func(t *testing.T) {
+	t.Run("Loop Execution", func(t *testing.T) {
 		cpu, bus := setupCPU()
 
-		// Simple loop that should benefit from caching
+		// Simple loop
 		program := []uint8{
 			0xA2, 0x00, // LDX #$00      ; $8000
 			0xE8,       // INX           ; $8002 (loop start)
@@ -84,71 +78,9 @@ func TestSelfModifyingCode(t *testing.T) {
 		// Execute the loop
 		runUntilBrk(cpu, bus, 100)
 
-		// Check cache statistics
-		hits, misses, hitRate := cpu.InstructionCacheStats()
-
-		// We should have some cache hits from the loop
-		if hits == 0 {
-			t.Logf("Warning: No cache hits detected (hits=%d, misses=%d, rate=%.2f%%)",
-				hits, misses, hitRate*100)
-		} else {
-			t.Logf("Cache stats: hits=%d, misses=%d, hit rate=%.2f%%",
-				hits, misses, hitRate*100)
-		}
-
 		// Verify X register has the expected value
 		if cpu.X != 0x05 {
 			t.Errorf("Loop execution failed: expected X=$05, got X=$%02X", cpu.X)
 		}
-	})
-
-	t.Run("Disable and Enable Cache", func(t *testing.T) {
-		cpu, bus := setupCPU()
-
-		// Simple program
-		program := []uint8{
-			0xA9, 0x42, // LDA #$42
-			0x00, // BRK
-		}
-
-		bus.load(0x8000, program)
-
-		// Execute with cache enabled
-		cpu.EnableInstructionCache()
-		cpu.PC = 0x8000
-		cpu.SetCycles(0)
-		runCycles(cpu, 2)
-
-		hits1, misses1, _ := cpu.InstructionCacheStats()
-
-		// Disable cache
-		cpu.DisableInstructionCache()
-		cpu.PC = 0x8000
-		cpu.SetCycles(0)
-		runCycles(cpu, 2)
-
-		hits2, misses2, _ := cpu.InstructionCacheStats()
-
-		// Stats should be zero when cache is disabled
-		if hits2 != 0 || misses2 != 0 {
-			t.Errorf("Cache stats should be zero when disabled: hits=%d, misses=%d", hits2, misses2)
-		}
-
-		// Re-enable cache
-		cpu.EnableInstructionCache()
-		cpu.PC = 0x8000
-		cpu.SetCycles(0)
-		runCycles(cpu, 2)
-
-		hits3, misses3, _ := cpu.InstructionCacheStats()
-
-		// Should have stats again
-		if hits3 == 0 && misses3 == 0 {
-			t.Errorf("Cache stats should not be zero after re-enabling")
-		}
-
-		t.Logf("Cache enabled: hits=%d, misses=%d", hits1, misses1)
-		t.Logf("Cache disabled: hits=%d, misses=%d", hits2, misses2)
-		t.Logf("Cache re-enabled: hits=%d, misses=%d", hits3, misses3)
 	})
 }

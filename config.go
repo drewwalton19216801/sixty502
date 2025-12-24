@@ -26,13 +26,6 @@ import "log"
 //   - Some variants (Ricoh 2A03) don't support decimal mode
 //   - Can be disabled for performance or compatibility
 //
-// EnableInstructionCache: Enables instruction caching
-//   - Improves performance by caching instruction lookups
-//   - Should be disabled for self-modifying code
-//
-// InstructionCacheSize: Sets cache size (currently fixed at 256)
-//   - Reserved for future use
-//
 // Example usage:
 //
 //	config := cpu6502.DefaultConfig()
@@ -51,12 +44,6 @@ type CPUConfig struct {
 
 	// EnableDecimalMode allows disabling decimal mode even on variants that support it
 	EnableDecimalMode bool
-
-	// EnableInstructionCache enables instruction caching for performance
-	EnableInstructionCache bool
-
-	// InstructionCacheSize sets the cache size (default: 256 entries)
-	InstructionCacheSize int
 }
 
 // DefaultConfig returns a configuration with sensible defaults.
@@ -66,19 +53,15 @@ type CPUConfig struct {
 //   - ErrorHandler: LoggingErrorHandler (logs to default logger)
 //   - StrictMode: false (continues on errors)
 //   - EnableDecimalMode: true
-//   - EnableInstructionCache: true
-//   - InstructionCacheSize: 256
 //
 // This configuration is suitable for most emulation scenarios and
 // provides a good balance between accuracy and performance.
 func DefaultConfig() CPUConfig {
 	return CPUConfig{
-		Variant:                VariantNMOS6502,
-		ErrorHandler:           &LoggingErrorHandler{Logger: log.Default()},
-		StrictMode:             false,
-		EnableDecimalMode:      true,
-		EnableInstructionCache: true,
-		InstructionCacheSize:   256,
+		Variant:           VariantNMOS6502,
+		ErrorHandler:      &LoggingErrorHandler{Logger: log.Default()},
+		StrictMode:        false,
+		EnableDecimalMode: true,
 	}
 }
 
@@ -175,35 +158,6 @@ func (b *CPUBuilder) WithErrorHandler(handler ErrorHandler) *CPUBuilder {
 //	builder.DisableDecimalMode()
 func (b *CPUBuilder) DisableDecimalMode() *CPUBuilder {
 	b.config.EnableDecimalMode = false
-	return b
-}
-
-// DisableInstructionCache disables the instruction cache.
-//
-// This should be used when emulating self-modifying code or when
-// cache invalidation would be too complex to manage.
-//
-// Returns the builder for method chaining.
-//
-// Example:
-//
-//	builder.DisableInstructionCache()
-func (b *CPUBuilder) DisableInstructionCache() *CPUBuilder {
-	b.config.EnableInstructionCache = false
-	return b
-}
-
-// WithInstructionCacheSize sets the instruction cache size.
-//
-// Note: Currently the cache size is fixed at 256 entries. This method
-// is reserved for future use.
-//
-// Parameters:
-//   - size: The desired cache size
-//
-// Returns the builder for method chaining.
-func (b *CPUBuilder) WithInstructionCacheSize(size int) *CPUBuilder {
-	b.config.InstructionCacheSize = size
 	return b
 }
 
@@ -340,11 +294,6 @@ func NewCPUWithConfig(bus Bus, config CPUConfig) *CPU {
 		SP:           0xFD,
 		variant:      config.Variant,
 		errorHandler: errorHandler,
-	}
-
-	// Initialize instruction cache if enabled
-	if config.EnableInstructionCache {
-		c.instrCache = NewInstructionCache()
 	}
 
 	c.buildLookupTable()
